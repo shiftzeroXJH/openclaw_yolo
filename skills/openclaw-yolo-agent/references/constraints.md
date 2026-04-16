@@ -1,26 +1,6 @@
 # Parameter Constraints
 
-The training system validates parameter updates in code. The LLM or OpenClaw may suggest changes, but invalid updates are rejected.
-
-## First-Trial Baseline
-
-Current `detection` defaults:
-
-- `imgsz=640`
-- `batch=16`
-- `workers=2`
-- `epochs=100`
-- `lr0=0.01`
-- `weight_decay=0.0005`
-- `mosaic=0.5`
-- `mixup=0.0`
-- `degrees=0.0`
-- `translate=0.1`
-- `scale=0.5`
-- `fliplr=0.5`
-- `hsv_h=0.015`
-- `hsv_s=0.7`
-- `hsv_v=0.4`
+The training system validates parameter updates in code. Invalid updates are rejected.
 
 ## Validation Model
 
@@ -50,5 +30,5 @@ Current `detection` defaults:
 - Modify at most 3 parameters in one iteration.
 - Do not suggest undeclared parameters.
 - Keep `workers` conservative on memory-limited machines.
-- Use `batch` and `imgsz` reductions first when troubleshooting memory pressure.
-- If instability appears, prefer lowering `lr0` or reducing aggressive augmentation.
+- Use `batch` and `imgsz` reductions first for memory pressure.
+- If instability appears, lower `lr0` or reduce aggressive augmentation.
