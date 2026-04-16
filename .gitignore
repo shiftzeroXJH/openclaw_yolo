@@ -1,4 +1,4 @@
-openclaw_yolo_state.sqlite
+*.sqlite
 runs/
 datasets/
 *.pt
