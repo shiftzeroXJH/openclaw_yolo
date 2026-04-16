@@ -1,0 +1,9 @@
+openclaw_yolo_state.sqlite
+runs/
+datasets/
+*.pt
+*.onnx
+*.engine
+*.log
+__pycache__/
+.env
