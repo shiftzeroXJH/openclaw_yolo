@@ -48,7 +48,6 @@
   - OpenClaw 后续决策应优先读取 summary，而不是直接读取原始训练日志
 
 - 多轮迭代
-  - 支持 `propose-next`
   - 支持 `continue`
   - 也就是首轮训练完成后，可以基于结果决定下一轮是否继续，以及修改哪些参数
   - 这里仍然是“LLM 给建议，代码做校验”
@@ -149,8 +148,7 @@ OpenClaw 负责：
 - `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py show-task --experiment-id exp_001`
 - `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py cancel-task --experiment-id exp_001 --reason "<文本>"`
 - `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py delete-task --experiment-id exp_001`
-- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py propose-next --experiment-id exp_001`
-- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py continue --experiment-id exp_001`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py continue --experiment-id exp_001 --reason "<text>" [--imgsz <value>] [--batch <value>] ...`
 
 如果 OpenClaw 运行在 WSL，而 Python 环境在 Windows，优先使用 HTTP bridge：
 
@@ -236,7 +234,7 @@ LLM 不能修改任意参数。所有参数更新都会经过 `src/openclaw_yolo
 
 ## LLM 对接
 
-`propose-next` 依赖外部桥接命令 `OPENCLAW_YOLO_LLM_COMMAND`。
+训练完成后的总结与优化建议由 OpenClaw 自己结合 `show-task` 和 `get-summary` 完成。
 
 这个桥接命令会从 stdin 接收 JSON，并从 stdout 返回 JSON。例如：
 
@@ -320,7 +318,6 @@ bash /mnt/d/project/openclaw_yolo/start-http-client.sh list-tasks
 - `run-trial`
 - `get-job`
 - `get-summary`
-- `propose-next`
 - `continue`
 - `cancel-task`
 - `delete-task`
@@ -400,13 +397,13 @@ python .\bin\openclaw-yolo-http-client.py get-summary --trial-id trial_001
 5. 生成下一轮建议：
 
 ```powershell
-python .\bin\openclaw-yolo-http-client.py propose-next --experiment-id exp_002
+python .\bin\openclaw-yolo-http-client.py show-task --experiment-id exp_002
 ```
 
 6. 应用通过校验的建议并继续：
 
 ```powershell
-python .\bin\openclaw-yolo-http-client.py continue --experiment-id exp_002
+python .\bin\openclaw-yolo-http-client.py continue --experiment-id exp_002 --reason "lower lr0 and reduce augmentation" --lr0 0.005 --mosaic 0.3
 ```
 
 ## 当前还可以继续增强的方向
@@ -415,6 +412,6 @@ python .\bin\openclaw-yolo-http-client.py continue --experiment-id exp_002
 
 - 更强的 bridge 鉴权
 - 更稳定的并发 ID 生成
-- 更轻量的 `propose-next` LLM payload
+- 更清晰的 OpenClaw 结果分析提示词
 - 更完善的批量清理和归档
 - 更瘦的 OpenClaw skill 提示词

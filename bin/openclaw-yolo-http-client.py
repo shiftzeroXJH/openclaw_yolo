@@ -61,10 +61,27 @@ def build_parser() -> argparse.ArgumentParser:
     summary_parser = subparsers.add_parser("get-summary")
     summary_parser.add_argument("--trial-id", required=True)
     summary_parser.add_argument("--full", action="store_true")
-    propose_parser = subparsers.add_parser("propose-next")
-    propose_parser.add_argument("--experiment-id", required=True)
     continue_parser = subparsers.add_parser("continue")
     continue_parser.add_argument("--experiment-id", required=True)
+    continue_parser.add_argument("--reason", required=True)
+    for arg in (
+        "imgsz",
+        "batch",
+        "workers",
+        "epochs",
+        "lr0",
+        "weight_decay",
+        "mosaic",
+        "mixup",
+        "degrees",
+        "translate",
+        "scale",
+        "fliplr",
+        "hsv_h",
+        "hsv_s",
+        "hsv_v",
+    ):
+        continue_parser.add_argument(f"--{arg.replace('_', '-')}")
 
     create_parser = subparsers.add_parser("create-task")
     create_parser.add_argument("--description", default="")
@@ -140,10 +157,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "get-summary":
         compact = "false" if args.full else "true"
         return _request("GET", f"/trials/{args.trial_id}/summary?compact={compact}")
-    if args.command == "propose-next":
-        return _request("POST", f"/tasks/{args.experiment_id}/propose-next")
     if args.command == "continue":
-        return _request("POST", f"/tasks/{args.experiment_id}/continue")
+        payload = {"reason": args.reason, "param_updates": {}}
+        for key in (
+            "imgsz",
+            "batch",
+            "workers",
+            "epochs",
+            "lr0",
+            "weight_decay",
+            "mosaic",
+            "mixup",
+            "degrees",
+            "translate",
+            "scale",
+            "fliplr",
+            "hsv_h",
+            "hsv_s",
+            "hsv_v",
+        ):
+            value = getattr(args, key)
+            if value is not None:
+                try:
+                    payload["param_updates"][key] = int(value)
+                except ValueError:
+                    try:
+                        payload["param_updates"][key] = float(value)
+                    except ValueError:
+                        payload["param_updates"][key] = value
+        return _request("POST", f"/tasks/{args.experiment_id}/continue", payload)
     if args.command == "create-task":
         payload = {
             "description": args.description,

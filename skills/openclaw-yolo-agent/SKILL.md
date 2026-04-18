@@ -32,8 +32,8 @@ All commands must use absolute paths under `/mnt/d/project/openclaw_yolo`. Do no
 4. Start training with `run-trial`
 5. Poll with `get-job` until `completed` or `failed`
 6. Review results with `show-task` and `get-summary`
-7. If needed, call `propose-next`
-8. Apply the validated proposal with `continue`
+7. Analyze the result in-context using `show-task` and `get-summary`
+8. If needed, call `continue` with `reason` and validated `param_updates`
 
 ## Parameter Constraints
 
@@ -47,12 +47,11 @@ All commands must use absolute paths under `/mnt/d/project/openclaw_yolo`. Do no
 - Do not guess IDs; read them from prior command output
 - Do not invent `session_key`; obtain the current session key before `create-task`
 - Do not feed `stdout.log` or `stderr.log` into model context unless debugging a failure
-- Do not manually edit parameters between iterations; use `propose-next` then `continue`
+- Do not invent unrestricted parameter changes; when continuing, pass at most 3 declared param updates through `continue`
 - Only report metrics returned by CLI JSON output; never invent or estimate results
 - If the task is `COMPLETED`, do not call `continue`; suggest creating a new task instead
 - If a weight file is invalid, stop and ask for a valid model path or filename
 - If `create-task` returns a `session_key` validation error, stop and fix the session binding before training
-- If `OPENCLAW_YOLO_LLM_COMMAND` is missing, explain that proposal generation is unavailable instead of inventing updates
 - Use `delete-task` for cleanup instead of manual file or DB deletion
 
 ## References

@@ -10,6 +10,24 @@ class ProposalValidationError(ValueError):
     pass
 
 
+def validate_continue_request(
+    param_updates: dict[str, Any] | None,
+    reason: str | None,
+    *,
+    target_reached: bool = False,
+) -> dict[str, Any]:
+    proposal = {
+        "decision": "continue",
+        "param_updates": param_updates or {},
+        "reason": reason or "",
+    }
+    validated = validate_proposal(proposal, target_reached=target_reached)
+    return {
+        "param_updates": validated["param_updates"],
+        "reason": validated["reason"],
+    }
+
+
 def validate_proposal(proposal: dict[str, Any], target_reached: bool = False) -> dict[str, Any]:
     decision = proposal.get("decision")
     if decision not in {"continue", "stop"}:

@@ -71,14 +71,18 @@ def run_trial(experiment_id: str) -> dict[str, Any]:
     return _invoke_async("run-trial", experiment_id, lambda: service.run_trial(experiment_id))
 
 
-@app.post("/tasks/{experiment_id}/propose-next")
-def propose_next(experiment_id: str) -> dict[str, Any]:
-    return _invoke_sync("propose-next", lambda: service.propose_next(experiment_id))
-
-
 @app.post("/tasks/{experiment_id}/continue")
-def continue_task(experiment_id: str) -> dict[str, Any]:
-    return _invoke_async("continue", experiment_id, lambda: service.continue_experiment(experiment_id))
+def continue_task(experiment_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = dict(payload or {})
+    return _invoke_async(
+        "continue",
+        experiment_id,
+        lambda: service.continue_experiment(
+            experiment_id,
+            param_updates=body.get("param_updates"),
+            reason=body.get("reason"),
+        ),
+    )
 
 
 @app.post("/tasks/{experiment_id}/cancel")

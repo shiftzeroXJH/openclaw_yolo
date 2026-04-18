@@ -13,7 +13,6 @@ from openclaw_yolo.constants import (
     EXPERIMENT_FILENAME,
     SEARCH_SPACE,
     STATE_ANALYZING,
-    STATE_AUTO_TUNE,
     STATE_CANCELLED,
     STATE_COMPLETED,
     STATE_FAILED,
@@ -28,8 +27,7 @@ from openclaw_yolo.constants import (
 from openclaw_yolo.core.analyzer import build_summary
 from openclaw_yolo.core.baseline import build_initial_params
 from openclaw_yolo.core.dataset import inspect_dataset
-from openclaw_yolo.core.llm_adapter import LLMAdapterError, request_next_step
-from openclaw_yolo.core.param_search import ProposalValidationError, validate_proposal
+from openclaw_yolo.core.param_search import ProposalValidationError, validate_continue_request
 from openclaw_yolo.core.trainer import TrainingError, run_training
 from openclaw_yolo.db.repository import Repository
 from openclaw_yolo.models import ExperimentConfig, GoalConfig, TrialRecord
@@ -132,16 +130,13 @@ def _build_notify_message(
         f"experiment_id: {config.experiment_id}\n"
         f"trial_id: {trial_id}\n"
         f"goal: {config.goal.metric}={config.goal.target}\n\n"
-        "compact_summary:\n"
-        f"{json.dumps(compact_summary, ensure_ascii=False, indent=2, sort_keys=True)}\n\n"
-        "\u8bf7\u4f60\u57fa\u4e8e\u8fd9\u6b21\u8bad\u7ec3\u7ed3\u679c\uff1a\n"
-        "1. \u7528\u4e2d\u6587\u603b\u7ed3\u672c\u8f6e\u6548\u679c\n"
-        "2. \u5224\u65ad\u662f\u5426\u8fbe\u5230\u76ee\u6807\n"
-        "3. \u5224\u65ad\u662f\u5426\u5b58\u5728\u5e73\u53f0\u671f\u3001\u8fc7\u62df\u5408\u3001\u8d44\u6e90\u74f6\u9888\u6216\u8bad\u7ec3\u4e0d\u7a33\u5b9a\n"
+        "\u8bf7\u4f60\u4e3b\u52a8\u8c03\u7528 openclaw-yolo \u5de5\u5177\u83b7\u53d6\u5b8c\u6574\u8bad\u7ec3\u4e0a\u4e0b\u6587\uff0c\u5e76\u7ed9\u6211\u603b\u7ed3\u4e0e\u4f18\u5316\u5efa\u8bae\uff1a\n"
+        "1. \u5148\u8c03\u7528 show-task --experiment-id \u67e5\u770b\u4efb\u52a1\u6574\u4f53\u72b6\u6001\n"
+        "2. \u518d\u8c03\u7528 get-summary --trial-id \u8bfb\u53d6\u672c\u8f6e\u7ed3\u6784\u5316\u7ed3\u679c\n"
+        "3. \u7528\u4e2d\u6587\u603b\u7ed3\u672c\u8f6e\u6548\u679c\uff0c\u5224\u65ad\u662f\u5426\u8fbe\u5230\u76ee\u6807\n"
         "4. \u7ed9\u51fa\u4e0b\u4e00\u8f6e\u8bad\u7ec3\u5efa\u8bae\n"
-        "5. \u53c2\u6570\u5efa\u8bae\u6700\u591a 3 \u4e2a\uff0c\u4e14\u53ea\u5141\u8bb8\uff1a\n"
-        "imgsz, batch, workers, epochs, lr0, weight_decay, mosaic, mixup, degrees, translate, scale, fliplr, hsv_h, hsv_s, hsv_v\n"
-        "6. \u4e0d\u8981\u6267\u884c\u8bad\u7ec3\u547d\u4ee4\uff0c\u53ea\u8f93\u51fa\u7ed9\u6211\u7684\u7ed3\u8bba\u548c\u5efa\u8bae"
+        "5. \u5982\u679c\u51b3\u5b9a\u7ee7\u7eed\uff0c\u4f7f\u7528 continue \u63d0\u4ea4 reason \u548c param_updates\n"
+        "6. param_updates \u6700\u591a 3 \u4e2a\uff0c\u4e14\u53ea\u5141\u8bb8\uff1a imgsz, batch, workers, epochs, lr0, weight_decay, mosaic, mixup, degrees, translate, scale, fliplr, hsv_h, hsv_s, hsv_v"
     )
 
 
@@ -520,85 +515,45 @@ class OrchestratorService:
             }
         return summary
 
-    def propose_next(self, experiment_id: str) -> dict[str, Any]:
-        config = self.repo.get_experiment(experiment_id)
+    def continue_experiment(
+        self,
+        experiment_id: str,
+        *,
+        param_updates: dict[str, Any] | None,
+        reason: str | None,
+    ) -> dict[str, Any]:
         trials = self.repo.list_trials(experiment_id)
         if not trials:
-            raise ServiceError("cannot propose next step before the first trial exists")
+            raise ServiceError("cannot continue an experiment without trials")
+        config = self.repo.get_experiment(experiment_id)
         latest_trial = trials[-1]
         if not latest_trial.summary_path:
             raise ServiceError("latest trial has no summary")
         latest_summary = read_json(latest_trial.summary_path)
         target_reached = float(latest_summary["final_metrics"].get(config.goal.metric, 0.0)) >= config.goal.target
-        if target_reached:
-            proposal = {
-                "decision": "stop",
-                "param_updates": {},
-                "reason": f"target reached for {config.goal.metric}",
-            }
-        else:
-            recent_trials = trials[-2:]
-            payload = {
-                "task": {
-                    "experiment_id": config.experiment_id,
-                    "description": config.description,
-                    "task_type": config.task_type,
-                    "status": config.status,
-                },
-                "goal": config.goal.__dict__,
-                "stop_conditions": config.stop_conditions,
-                "allowed_updates": {
-                    "max_param_changes": 3,
-                    "search_space": _compact_search_space(config.search_space),
-                },
-                "latest_summary": _compact_summary(latest_summary),
-                "latest_trial": {
-                    "trial_id": latest_trial.trial_id,
-                    "iteration": latest_trial.iteration,
-                    "status": latest_trial.status,
-                    "params": latest_trial.params,
-                    "metrics": latest_trial.metrics,
-                },
-                "recent_trials": [
-                    {
-                        "trial_id": trial.trial_id,
-                        "iteration": trial.iteration,
-                        "status": trial.status,
-                        "params": trial.params,
-                        "metrics": trial.metrics,
-                    }
-                    for trial in recent_trials
-                ],
-            }
-            try:
-                proposal = request_next_step(payload)
-            except LLMAdapterError as exc:
-                raise ServiceError(str(exc)) from exc
-
         try:
-            validated = validate_proposal(proposal, target_reached=target_reached)
+            validated = validate_continue_request(
+                param_updates,
+                reason,
+                target_reached=target_reached,
+            )
         except ProposalValidationError as exc:
             raise ServiceError(str(exc)) from exc
-        self.repo.update_experiment_status(experiment_id, STATE_AUTO_TUNE)
-        self.repo.add_event(experiment_id, "NEXT_PROPOSAL", validated, latest_trial.trial_id)
-        return validated
-
-    def continue_experiment(self, experiment_id: str) -> dict[str, Any]:
-        proposal = self.repo.latest_event(experiment_id, "NEXT_PROPOSAL")
-        if proposal is None:
-            raise ServiceError("no validated proposal found; run propose-next first")
-        if proposal["decision"] == "stop":
-            self.repo.update_experiment_status(experiment_id, STATE_COMPLETED)
-            return {"status": STATE_COMPLETED, "decision": "stop", "reason": proposal["reason"]}
-
-        trials = self.repo.list_trials(experiment_id)
-        if not trials:
-            raise ServiceError("cannot continue an experiment without trials")
-        params = dict(trials[-1].params)
-        params.update(proposal["param_updates"])
+        params = dict(latest_trial.params)
+        params.update(validated["param_updates"])
+        self.repo.add_event(
+            experiment_id,
+            "CONTINUE_REQUESTED",
+            {
+                "trial_id": latest_trial.trial_id,
+                "param_updates": validated["param_updates"],
+                "reason": validated["reason"],
+            },
+            latest_trial.trial_id,
+        )
         result = self.run_trial(experiment_id, params=params)
-        result["applied_updates"] = proposal["param_updates"]
-        result["reason"] = proposal["reason"]
+        result["applied_updates"] = validated["param_updates"]
+        result["reason"] = validated["reason"]
         return result
 
     def _completion_status(
