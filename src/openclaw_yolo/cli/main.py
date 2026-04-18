@@ -66,6 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     create_parser = subparsers.add_parser("create-task")
     create_parser.add_argument("--description", default="")
+    create_parser.add_argument("--session-key", required=True)
     create_parser.add_argument("--task-type", required=True, choices=ALLOWED_TASK_TYPES)
     create_parser.add_argument("--dataset-root", required=True)
     create_parser.add_argument("--dataset-yaml")
@@ -130,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
             return _emit(
                 service.create_task(
                     description=args.description,
+                    session_key=args.session_key,
                     task_type=args.task_type,
                     dataset_root=args.dataset_root,
                     dataset_yaml=args.dataset_yaml,

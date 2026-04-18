@@ -62,6 +62,8 @@ def build_cli_args(command: str, payload: dict[str, Any] | None = None) -> list[
             "create-task",
             "--description",
             str(payload.get("description", "")),
+            "--session-key",
+            str(payload["session_key"]),
             "--task-type",
             str(payload["task_type"]),
             "--dataset-root",

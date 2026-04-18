@@ -14,6 +14,7 @@ class GoalConfig:
 class ExperimentConfig:
     experiment_id: str
     description: str
+    session_key: str
     task_type: str
     dataset_root: str
     dataset_yaml: str

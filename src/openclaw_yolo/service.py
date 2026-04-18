@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import shlex
+import subprocess
 import shutil
 import stat
 from pathlib import Path
@@ -34,6 +37,147 @@ from openclaw_yolo.utils import ensure_dir, read_json, write_json
 
 class ServiceError(RuntimeError):
     pass
+
+
+OPENCLAW_SESSIONS_PATH = "~/.openclaw/agents/main/sessions/sessions.json"
+OPENCLAW_NOTIFY_SCRIPT = "/home/shiftzero/bin/openclaw_notify.sh"
+
+
+def _compact_search_space(search_space: dict[str, Any]) -> dict[str, str]:
+    compact: dict[str, str] = {}
+    for name, spec in search_space.items():
+        if not isinstance(spec, dict):
+            compact[name] = str(spec)
+            continue
+        spec_type = spec.get("type")
+        if spec_type == "choice":
+            values = ", ".join(str(value) for value in spec.get("values", []))
+            compact[name] = f"choice[{values}]"
+            continue
+        if spec_type in {"int", "float"}:
+            parts = [spec_type]
+            if "min" in spec and "max" in spec:
+                parts.append(f"{spec['min']}..{spec['max']}")
+            if "step" in spec:
+                parts.append(f"step {spec['step']}")
+            compact[name] = " ".join(parts)
+            continue
+        compact[name] = str(spec)
+    return compact
+
+
+def _compact_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "final_metrics": summary.get("final_metrics", {}),
+        "delta_vs_prev": summary.get("delta_vs_prev", {}),
+        "training_dynamics": summary.get("training_dynamics", {}),
+        "warnings": summary.get("warnings", []),
+        "resource": summary.get("resource", {}),
+        "basic_info": summary.get("basic_info", {}),
+        "params": summary.get("params", {}),
+    }
+
+
+def _notification_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "final_metrics": summary.get("final_metrics", {}),
+        "delta_vs_prev": summary.get("delta_vs_prev", {}),
+        "training_dynamics": summary.get("training_dynamics", {}),
+        "warnings": summary.get("warnings", []),
+        "resource": summary.get("resource", {}),
+        "params": summary.get("params", {}),
+    }
+
+
+def _resolve_session_id(session_key: str) -> str:
+    script = (
+        "import json, sys, pathlib; "
+        "path = pathlib.Path(sys.argv[1]).expanduser(); "
+        "session_key = sys.argv[2]; "
+        "data = json.loads(path.read_text(encoding='utf-8')); "
+        "entry = data.get(session_key); "
+        "session_id = None if entry is None else entry.get('sessionId'); "
+        "sys.exit(2) if entry is None or not session_id else print(session_id)"
+    )
+    try:
+        process = subprocess.run(
+            ["wsl", "python3", "-c", script, OPENCLAW_SESSIONS_PATH, session_key],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ServiceError("failed to invoke WSL while validating session_key") from exc
+
+    stdout = process.stdout.strip()
+    stderr = process.stderr.strip()
+    if process.returncode == 0 and stdout:
+        return stdout
+    if process.returncode == 2:
+        raise ServiceError("invalid session_key: not found in OpenClaw sessions.json")
+    if "No such file" in stderr:
+        raise ServiceError(f"OpenClaw sessions file not found: {OPENCLAW_SESSIONS_PATH}")
+    raise ServiceError(stderr or "failed to resolve session_key via WSL")
+
+
+def _build_notify_message(
+    config: ExperimentConfig,
+    trial_id: str,
+    compact_summary: dict[str, Any],
+) -> str:
+    return (
+        "\u8fd9\u662f\u4e00\u6b21 YOLO \u8bad\u7ec3\u5b8c\u6210\u540e\u7684\u81ea\u52a8\u56de\u8c03\uff0c\u8bf7\u7ee7\u7eed\u5728\u5f53\u524d\u4f1a\u8bdd\u4e0a\u4e0b\u6587\u4e2d\u5904\u7406\u3002\n\n"
+        f"experiment_id: {config.experiment_id}\n"
+        f"trial_id: {trial_id}\n"
+        f"goal: {config.goal.metric}={config.goal.target}\n\n"
+        "compact_summary:\n"
+        f"{json.dumps(compact_summary, ensure_ascii=False, indent=2, sort_keys=True)}\n\n"
+        "\u8bf7\u4f60\u57fa\u4e8e\u8fd9\u6b21\u8bad\u7ec3\u7ed3\u679c\uff1a\n"
+        "1. \u7528\u4e2d\u6587\u603b\u7ed3\u672c\u8f6e\u6548\u679c\n"
+        "2. \u5224\u65ad\u662f\u5426\u8fbe\u5230\u76ee\u6807\n"
+        "3. \u5224\u65ad\u662f\u5426\u5b58\u5728\u5e73\u53f0\u671f\u3001\u8fc7\u62df\u5408\u3001\u8d44\u6e90\u74f6\u9888\u6216\u8bad\u7ec3\u4e0d\u7a33\u5b9a\n"
+        "4. \u7ed9\u51fa\u4e0b\u4e00\u8f6e\u8bad\u7ec3\u5efa\u8bae\n"
+        "5. \u53c2\u6570\u5efa\u8bae\u6700\u591a 3 \u4e2a\uff0c\u4e14\u53ea\u5141\u8bb8\uff1a\n"
+        "imgsz, batch, workers, epochs, lr0, weight_decay, mosaic, mixup, degrees, translate, scale, fliplr, hsv_h, hsv_s, hsv_v\n"
+        "6. \u4e0d\u8981\u6267\u884c\u8bad\u7ec3\u547d\u4ee4\uff0c\u53ea\u8f93\u51fa\u7ed9\u6211\u7684\u7ed3\u8bba\u548c\u5efa\u8bae"
+    )
+
+
+def _notify_status(latest_event: dict[str, Any] | None) -> dict[str, Any] | None:
+    if latest_event is None:
+        return None
+    payload = latest_event.get("payload", {})
+    status = "sent" if latest_event.get("event_type") == "OPENCLAW_NOTIFY_SENT" else "failed"
+    result = {
+        "status": status,
+        "created_at": latest_event.get("created_at"),
+        "trial_id": payload.get("trial_id"),
+        "session_key": payload.get("session_key"),
+    }
+    if status == "sent":
+        result["session_id"] = payload.get("session_id")
+    else:
+        result["error"] = payload.get("error")
+    return result
+
+
+def _notify_openclaw_session(session_id: str, message: str) -> None:
+    command = (
+        f"{shlex.quote(OPENCLAW_NOTIFY_SCRIPT)} "
+        f"{shlex.quote(session_id)} "
+        f"{shlex.quote(message)}"
+    )
+    try:
+        process = subprocess.run(
+            ["wsl", "bash", "-ic", command],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ServiceError("failed to invoke WSL while notifying OpenClaw") from exc
+    if process.returncode != 0:
+        raise ServiceError(process.stderr.strip() or "openclaw_notify.sh failed")
 
 
 def _resolve_pretrained_model(pretrained: str) -> str:
@@ -88,6 +232,7 @@ class OrchestratorService:
         self,
         *,
         description: str,
+        session_key: str,
         task_type: str,
         dataset_root: str,
         dataset_yaml: str | None,
@@ -98,6 +243,10 @@ class OrchestratorService:
         confirm_timeout: int,
         initial_overrides: dict[str, Any],
     ) -> dict[str, Any]:
+        normalized_session_key = session_key.strip()
+        if not normalized_session_key:
+            raise ServiceError("session_key is required")
+        _resolve_session_id(normalized_session_key)
         candidates = inspect_dataset(dataset_root)
         if dataset_yaml is None:
             if len(candidates) != 1:
@@ -117,6 +266,7 @@ class OrchestratorService:
         config = ExperimentConfig(
             experiment_id=experiment_id,
             description=description.strip(),
+            session_key=normalized_session_key,
             task_type=task_type,
             dataset_root=str(Path(dataset_root).resolve()),
             dataset_yaml=str(Path(dataset_yaml).resolve()),
@@ -137,6 +287,7 @@ class OrchestratorService:
             "status": config.status,
             "experiment_id": experiment_id,
             "description": config.description,
+            "session_key": config.session_key,
             "dataset_yaml": config.dataset_yaml,
             "initial_params": config.initial_params,
             "experiment_dir": str(experiment_dir),
@@ -150,6 +301,7 @@ class OrchestratorService:
                     {
                         "experiment_id": item.experiment_id,
                         "description": item.description,
+                        "session_key": item.session_key,
                         "status": item.status,
                     }
                     for item in experiments
@@ -160,6 +312,7 @@ class OrchestratorService:
                 {
                     "experiment_id": item.experiment_id,
                     "description": item.description,
+                    "session_key": item.session_key,
                     "task_type": item.task_type,
                     "status": item.status,
                     "goal": item.goal.__dict__,
@@ -173,14 +326,22 @@ class OrchestratorService:
     def show_task(self, experiment_id: str, compact: bool = False) -> dict[str, Any]:
         config = self.repo.get_experiment(experiment_id)
         trials = self.repo.list_trials(experiment_id)
+        notify_status = _notify_status(
+            self.repo.latest_event_for_types(
+                experiment_id,
+                ["OPENCLAW_NOTIFY_SENT", "OPENCLAW_NOTIFY_FAILED"],
+            )
+        )
         if compact:
             latest_trial = trials[-1] if trials else None
             return {
                 "experiment_id": config.experiment_id,
                 "description": config.description,
+                "session_key": config.session_key,
                 "status": config.status,
                 "goal": config.goal.__dict__,
                 "trial_count": len(trials),
+                "openclaw_notify": notify_status,
                 "latest_trial": None
                 if latest_trial is None
                 else {
@@ -192,6 +353,7 @@ class OrchestratorService:
             }
         return {
             "experiment": config.to_dict(),
+            "openclaw_notify": notify_status,
             "trials": [
                 {
                     "trial_id": trial.trial_id,
@@ -319,6 +481,7 @@ class OrchestratorService:
             )
             self.repo.update_experiment_status(experiment_id, next_status)
             self.repo.add_event(experiment_id, "TRIAL_COMPLETED", summary, trial_id)
+            self._notify_training_result(config, trial_id, summary)
             return {
                 "status": next_status,
                 "trial_id": trial_id,
@@ -366,22 +529,38 @@ class OrchestratorService:
                 "reason": f"target reached for {config.goal.metric}",
             }
         else:
+            recent_trials = trials[-2:]
             payload = {
-                "experiment_config": config.to_dict(),
+                "task": {
+                    "experiment_id": config.experiment_id,
+                    "description": config.description,
+                    "task_type": config.task_type,
+                    "status": config.status,
+                },
+                "goal": config.goal.__dict__,
+                "stop_conditions": config.stop_conditions,
+                "allowed_updates": {
+                    "max_param_changes": 3,
+                    "search_space": _compact_search_space(config.search_space),
+                },
+                "latest_summary": _compact_summary(latest_summary),
+                "latest_trial": {
+                    "trial_id": latest_trial.trial_id,
+                    "iteration": latest_trial.iteration,
+                    "status": latest_trial.status,
+                    "params": latest_trial.params,
+                    "metrics": latest_trial.metrics,
+                },
                 "recent_trials": [
                     {
                         "trial_id": trial.trial_id,
                         "iteration": trial.iteration,
+                        "status": trial.status,
                         "params": trial.params,
                         "metrics": trial.metrics,
-                        "summary_path": trial.summary_path,
                     }
-                    for trial in trials[-3:]
+                    for trial in recent_trials
                 ],
-                "latest_summary": latest_summary,
-                "search_space": config.search_space,
-                "goal": config.goal.__dict__,
-                "status": config.status,
             }
             try:
                 proposal = request_next_step(payload)
@@ -426,3 +605,37 @@ class OrchestratorService:
         if trial_count >= int(config.stop_conditions["max_trials"]):
             return STATE_COMPLETED
         return STATE_WAITING
+
+    def _notify_training_result(
+        self,
+        config: ExperimentConfig,
+        trial_id: str,
+        summary: dict[str, Any],
+    ) -> None:
+        try:
+            session_id = _resolve_session_id(config.session_key)
+            compact_summary = _notification_summary(summary)
+            message = _build_notify_message(config, trial_id, compact_summary)
+            _notify_openclaw_session(session_id, message)
+            self.repo.add_event(
+                config.experiment_id,
+                "OPENCLAW_NOTIFY_SENT",
+                {
+                    "trial_id": trial_id,
+                    "session_key": config.session_key,
+                    "session_id": session_id,
+                    "compact_summary": compact_summary,
+                },
+                trial_id,
+            )
+        except ServiceError as exc:
+            self.repo.add_event(
+                config.experiment_id,
+                "OPENCLAW_NOTIFY_FAILED",
+                {
+                    "trial_id": trial_id,
+                    "session_key": config.session_key,
+                    "error": str(exc),
+                },
+                trial_id,
+            )

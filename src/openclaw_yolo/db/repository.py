@@ -47,6 +47,7 @@ class Repository:
                 CREATE TABLE IF NOT EXISTS experiments (
                     experiment_id TEXT PRIMARY KEY,
                     description TEXT NOT NULL DEFAULT '',
+                    session_key TEXT NOT NULL DEFAULT '',
                     task_type TEXT NOT NULL,
                     dataset_root TEXT NOT NULL,
                     dataset_yaml TEXT NOT NULL,
@@ -91,14 +92,24 @@ class Repository:
             }
             if "description" not in columns:
                 conn.execute("ALTER TABLE experiments ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+            if "session_key" not in columns:
+                conn.execute("ALTER TABLE experiments ADD COLUMN session_key TEXT NOT NULL DEFAULT ''")
 
     def _next_id(self, prefix: str, table: str, column: str) -> str:
         with self._connect() as conn:
-            row = conn.execute(
-                f"SELECT COUNT(*) AS count FROM {table} WHERE {column} LIKE ?",
+            rows = conn.execute(
+                f"SELECT {column} AS value FROM {table} WHERE {column} LIKE ?",
                 (f"{prefix}_%",),
-            ).fetchone()
-        return f"{prefix}_{int(row['count']) + 1:03d}"
+            ).fetchall()
+        max_index = 0
+        for row in rows:
+            raw_value = row["value"]
+            try:
+                _, suffix = str(raw_value).rsplit("_", 1)
+                max_index = max(max_index, int(suffix))
+            except (ValueError, TypeError):
+                continue
+        return f"{prefix}_{max_index + 1:03d}"
 
     def next_experiment_id(self) -> str:
         return self._next_id("exp", "experiments", "experiment_id")
@@ -111,14 +122,15 @@ class Repository:
             conn.execute(
                 """
                 INSERT INTO experiments (
-                    experiment_id, description, task_type, dataset_root, dataset_yaml, pretrained_model,
+                    experiment_id, description, session_key, task_type, dataset_root, dataset_yaml, pretrained_model,
                     save_root, goal_config, status, auto_iterate, confirm_timeout,
                     initial_params, search_space, stop_conditions, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     config.experiment_id,
                     config.description,
+                    config.session_key,
                     config.task_type,
                     config.dataset_root,
                     config.dataset_yaml,
@@ -146,6 +158,7 @@ class Repository:
         return ExperimentConfig(
             experiment_id=row["experiment_id"],
             description=row["description"],
+            session_key=row["session_key"],
             task_type=row["task_type"],
             dataset_root=row["dataset_root"],
             dataset_yaml=row["dataset_yaml"],
@@ -180,6 +193,7 @@ class Repository:
             ExperimentConfig(
                 experiment_id=row["experiment_id"],
                 description=row["description"],
+                session_key=row["session_key"],
                 task_type=row["task_type"],
                 dataset_root=row["dataset_root"],
                 dataset_yaml=row["dataset_yaml"],
@@ -322,6 +336,31 @@ class Repository:
                 (experiment_id, event_type),
             ).fetchone()
         return None if row is None else json.loads(row["payload_json"])
+
+    def latest_event_for_types(
+        self,
+        experiment_id: str,
+        event_types: list[str],
+    ) -> dict[str, Any] | None:
+        if not event_types:
+            return None
+        placeholders = ", ".join("?" for _ in event_types)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT event_type, payload_json, created_at FROM events
+                WHERE experiment_id = ? AND event_type IN ({placeholders})
+                ORDER BY event_id DESC LIMIT 1
+                """,
+                (experiment_id, *event_types),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "event_type": row["event_type"],
+            "payload": json.loads(row["payload_json"]),
+            "created_at": row["created_at"],
+        }
 
     def recent_summaries(self, experiment_id: str, limit: int = 3) -> list[dict[str, Any]]:
         trials = [trial for trial in self.list_trials(experiment_id) if trial.summary_path]

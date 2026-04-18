@@ -17,7 +17,7 @@ service = OrchestratorService(db_path=os.environ.get("OPENCLAW_YOLO_BRIDGE_DB_PA
 def _invoke_sync(action: str, callback: Any) -> dict[str, Any]:
     try:
         return callback()
-    except (ServiceError, FileNotFoundError, KeyError, ValueError) as exc:
+    except (ServiceError, FileNotFoundError, KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail={"error": str(exc), "action": action}) from exc
 
 
@@ -50,6 +50,7 @@ def show_task(experiment_id: str, compact: bool = False) -> dict[str, Any]:
 def create_task(payload: dict[str, Any]) -> dict[str, Any]:
     known_keys = {
         "description",
+        "session_key",
         "task_type",
         "dataset_root",
         "dataset_yaml",

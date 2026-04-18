@@ -8,6 +8,7 @@ description: Operate the local openclaw-yolo training system for task creation, 
 Use this skill as the only control surface for YOLO training. Do not call Ultralytics directly, do not edit SQLite manually, and do not infer state from raw folders when a command can answer it.
 
 Assume the repo path is `/mnt/d/project/openclaw_yolo` unless the user says otherwise.
+All commands must use absolute paths under `/mnt/d/project/openclaw_yolo`. Do not rely on the current working directory.
 
 ## Runtime
 
@@ -26,21 +27,32 @@ Assume the repo path is `/mnt/d/project/openclaw_yolo` unless the user says othe
 
 ## Minimal Workflow
 
-1. If dataset YAML is unknown, run `inspect-dataset`
-2. Create the task with `create-task`
-3. Start training with `run-trial`
-4. Poll with `get-job` until `completed` or `failed`
-5. Review results with `show-task` and `get-summary`
-6. If needed, call `propose-next`
-7. Apply the validated proposal with `continue`
+1. Always run `inspect-dataset` before `create-task` unless the dataset YAML is already confirmed
+2. Before `create-task`, determine the current OpenClaw `session_key`
+3. Create the task with `create-task` and include `session_key`
+4. Start training with `run-trial`
+5. Poll with `get-job` until `completed` or `failed`
+6. Review results with `show-task` and `get-summary`
+7. If needed, call `propose-next`
+8. Apply the validated proposal with `continue`
+
+## Parameter Constraints
+
+- At most 3 parameters may change per iteration
+- Only declared parameters may be updated
+- `imgsz` must be a multiple of `32`
+- Keep `workers` conservative on memory-constrained systems
 
 ## Rules
 
 - Do not guess IDs; read them from prior command output
+- Do not invent `session_key`; obtain the current session key before `create-task`
 - Do not feed `stdout.log` or `stderr.log` into model context unless debugging a failure
 - Do not manually edit parameters between iterations; use `propose-next` then `continue`
-- If the task is already `COMPLETED`, do not continue unless the user explicitly wants a new optimization target
+- Only report metrics returned by CLI JSON output; never invent or estimate results
+- If the task is `COMPLETED`, do not call `continue`; suggest creating a new task instead
 - If a weight file is invalid, stop and ask for a valid model path or filename
+- If `create-task` returns a `session_key` validation error, stop and fix the session binding before training
 - If `OPENCLAW_YOLO_LLM_COMMAND` is missing, explain that proposal generation is unavailable instead of inventing updates
 - Use `delete-task` for cleanup instead of manual file or DB deletion
 

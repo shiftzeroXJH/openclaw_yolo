@@ -142,7 +142,7 @@ OpenClaw 负责：
 所有命令都返回 JSON，便于 OpenClaw 调用：
 
 - `openclaw-yolo inspect-dataset --dataset-root <path>`
-- `openclaw-yolo create-task --description "<文本>" --task-type detection --dataset-root <path> --pretrained <model> --save-root <path> --goal metric=map50_95,target=0.65`
+- `openclaw-yolo create-task --description "<文本>" --session-key "<session_key>" --task-type detection --dataset-root <path> --pretrained <model> --save-root <path> --goal metric=map50_95,target=0.65`
 - `openclaw-yolo run-trial --experiment-id exp_001`
 - `openclaw-yolo get-summary --trial-id trial_001`
 - `openclaw-yolo list-tasks`
@@ -163,6 +163,8 @@ OpenClaw 负责：
 
 1. 任务类型 baseline
 2. `create-task` 时传入的用户覆盖参数
+
+`create-task` 现在必须传入有效的 OpenClaw `session_key`，系统会在创建任务时校验该会话是否存在。
 
 当前 `detection` baseline 为：
 
@@ -185,7 +187,7 @@ OpenClaw 负责：
 示例：
 
 ```powershell
-openclaw-yolo create-task --description "jinqiu low-memory baseline" --task-type detection --dataset-root E:\datasets\jinqiu --pretrained yolo26n.pt --save-root D:\project\openclaw_yolo\runs --goal metric=map50_95,target=0.65 --imgsz 224 --batch 8 --workers 2
+openclaw-yolo create-task --description "jinqiu low-memory baseline" --session-key "agent:main:feishu:direct:ou_xxx" --task-type detection --dataset-root E:\datasets\jinqiu --pretrained yolo26n.pt --save-root D:\project\openclaw_yolo\runs --goal metric=map50_95,target=0.65 --imgsz 224 --batch 8 --workers 2
 ```
 
 ## 参数约束
@@ -370,7 +372,7 @@ openclaw-yolo inspect-dataset --dataset-root E:\datasets\jinqiu
 2. 创建任务：
 
 ```powershell
-openclaw-yolo create-task --description "jinqiu baseline" --task-type detection --dataset-root E:\datasets\jinqiu --pretrained yolo26n.pt --save-root D:\project\openclaw_yolo\runs --goal metric=map50_95,target=0.65 --workers 2 --batch 8
+openclaw-yolo create-task --description "jinqiu baseline" --session-key "agent:main:feishu:direct:ou_xxx" --task-type detection --dataset-root E:\datasets\jinqiu --pretrained yolo26n.pt --save-root D:\project\openclaw_yolo\runs --goal metric=map50_95,target=0.65 --workers 2 --batch 8
 ```
 
 3. 启动首轮训练：
