@@ -210,6 +210,41 @@ class Repository:
             for row in rows
         ]
 
+    def stale_unstarted_experiments(self, cutoff_iso: str, status: str) -> list[ExperimentConfig]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT e.*
+                FROM experiments e
+                LEFT JOIN trials t ON t.experiment_id = e.experiment_id
+                WHERE e.status = ? AND e.created_at < ?
+                GROUP BY e.experiment_id
+                HAVING COUNT(t.trial_id) = 0
+                ORDER BY e.created_at ASC, e.experiment_id ASC
+                """,
+                (status, cutoff_iso),
+            ).fetchall()
+        return [
+            ExperimentConfig(
+                experiment_id=row["experiment_id"],
+                description=row["description"],
+                session_key=row["session_key"],
+                task_type=row["task_type"],
+                dataset_root=row["dataset_root"],
+                dataset_yaml=row["dataset_yaml"],
+                pretrained_model=row["pretrained_model"],
+                save_root=row["save_root"],
+                goal=GoalConfig(**json.loads(row["goal_config"])),
+                auto_iterate=bool(row["auto_iterate"]),
+                confirm_timeout=int(row["confirm_timeout"]),
+                status=row["status"],
+                initial_params=json.loads(row["initial_params"]),
+                search_space=json.loads(row["search_space"]),
+                stop_conditions=json.loads(row["stop_conditions"]),
+            )
+            for row in rows
+        ]
+
     def create_trial(self, trial: TrialRecord) -> None:
         with self._connect() as conn:
             conn.execute(

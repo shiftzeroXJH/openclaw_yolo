@@ -5,15 +5,14 @@ description: Operate the local openclaw-yolo training system for task creation, 
 
 # OpenClaw YOLO Agent
 
-Use this skill as the only control surface for YOLO training. Do not call Ultralytics directly, do not edit SQLite manually, and do not infer state from raw folders when a command can answer it.
+Use this skill as the only control surface for YOLO training through the local bridge client. Do not call Ultralytics directly, do not edit SQLite manually, and do not infer state from raw folders when a command can answer it.
 
 Assume the repo path is `/mnt/d/project/openclaw_yolo` unless the user says otherwise.
 All commands must use absolute paths under `/mnt/d/project/openclaw_yolo`. Do not rely on the current working directory.
 
 ## Runtime
 
-- Windows local use: `openclaw-yolo ...`
-- WSL/OpenClaw use: `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py ...`
+- Use the bridge client everywhere: `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py ...`
 - Windows bridge must already be running for WSL/OpenClaw use
 
 ## Default Behavior

@@ -6,7 +6,7 @@
 
 当前整体链路是：
 
-`飞书 -> OpenClaw -> HTTP client / CLI -> openclaw-yolo -> YOLO`
+`飞书 -> OpenClaw -> HTTP client -> openclaw-yolo bridge -> YOLO`
 
 这个项目现在已经具备的主要能力有：
 
@@ -102,7 +102,7 @@
 
 整体控制流为：
 
-`飞书 -> OpenClaw -> openclaw-yolo CLI / HTTP bridge -> 本地训练系统 -> YOLO`
+`飞书 -> OpenClaw -> HTTP bridge client -> 本地训练系统 -> YOLO`
 
 训练系统负责：
 
@@ -141,16 +141,16 @@ OpenClaw 负责：
 
 所有命令都返回 JSON，便于 OpenClaw 调用：
 
-- `openclaw-yolo inspect-dataset --dataset-root <path>`
-- `openclaw-yolo create-task --description "<文本>" --session-key "<session_key>" --task-type detection --dataset-root <path> --pretrained <model> --save-root <path> --goal metric=map50_95,target=0.65`
-- `openclaw-yolo run-trial --experiment-id exp_001`
-- `openclaw-yolo get-summary --trial-id trial_001`
-- `openclaw-yolo list-tasks`
-- `openclaw-yolo show-task --experiment-id exp_001`
-- `openclaw-yolo cancel-task --experiment-id exp_001 --reason "<文本>"`
-- `openclaw-yolo delete-task --experiment-id exp_001`
-- `openclaw-yolo propose-next --experiment-id exp_001`
-- `openclaw-yolo continue --experiment-id exp_001`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py inspect-dataset --dataset-root <path>`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py create-task --description "<文本>" --session-key "<session_key>" --task-type detection --dataset-root <path> --pretrained <model> --save-root <path> --goal metric=map50_95,target=0.65`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py run-trial --experiment-id exp_001`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py get-summary --trial-id trial_001`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py list-tasks`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py show-task --experiment-id exp_001`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py cancel-task --experiment-id exp_001 --reason "<文本>"`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py delete-task --experiment-id exp_001`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py propose-next --experiment-id exp_001`
+- `python3 /mnt/d/project/openclaw_yolo/bin/openclaw-yolo-http-client.py continue --experiment-id exp_001`
 
 如果 OpenClaw 运行在 WSL，而 Python 环境在 Windows，优先使用 HTTP bridge：
 
@@ -187,7 +187,7 @@ OpenClaw 负责：
 示例：
 
 ```powershell
-openclaw-yolo create-task --description "jinqiu low-memory baseline" --session-key "agent:main:feishu:direct:ou_xxx" --task-type detection --dataset-root E:\datasets\jinqiu --pretrained yolo26n.pt --save-root D:\project\openclaw_yolo\runs --goal metric=map50_95,target=0.65 --imgsz 224 --batch 8 --workers 2
+python .\bin\openclaw-yolo-http-client.py create-task --description "jinqiu low-memory baseline" --session-key "agent:main:feishu:direct:ou_xxx" --task-type detection --dataset-root E:\datasets\jinqiu --pretrained yolo26n.pt --save-root D:\project\openclaw_yolo\runs --goal metric=map50_95,target=0.65 --imgsz 224 --batch 8 --workers 2
 ```
 
 ## 参数约束
@@ -330,7 +330,7 @@ bash /mnt/d/project/openclaw_yolo/start-http-client.sh list-tasks
 如果要安全删除历史任务，请使用：
 
 ```powershell
-openclaw-yolo delete-task --experiment-id exp_002
+python .\bin\openclaw-yolo-http-client.py delete-task --experiment-id exp_002
 ```
 
 默认行为：
@@ -366,19 +366,19 @@ bash /mnt/d/project/openclaw_yolo/start-http-client.sh delete-task --experiment-
 1. 检查数据集：
 
 ```powershell
-openclaw-yolo inspect-dataset --dataset-root E:\datasets\jinqiu
+python .\bin\openclaw-yolo-http-client.py inspect-dataset --dataset-root E:\datasets\jinqiu
 ```
 
 2. 创建任务：
 
 ```powershell
-openclaw-yolo create-task --description "jinqiu baseline" --session-key "agent:main:feishu:direct:ou_xxx" --task-type detection --dataset-root E:\datasets\jinqiu --pretrained yolo26n.pt --save-root D:\project\openclaw_yolo\runs --goal metric=map50_95,target=0.65 --workers 2 --batch 8
+python .\bin\openclaw-yolo-http-client.py create-task --description "jinqiu baseline" --session-key "agent:main:feishu:direct:ou_xxx" --task-type detection --dataset-root E:\datasets\jinqiu --pretrained yolo26n.pt --save-root D:\project\openclaw_yolo\runs --goal metric=map50_95,target=0.65 --workers 2 --batch 8
 ```
 
 3. 启动首轮训练：
 
 ```powershell
-openclaw-yolo run-trial --experiment-id exp_002
+python .\bin\openclaw-yolo-http-client.py run-trial --experiment-id exp_002
 ```
 
 CLI 模式仍然是同步的，但通过 HTTP bridge 时已经是异步模式。通过 bridge / client 调 `run-trial` 时会先返回 `job_id`，然后再轮询这个 job 是否完成。
@@ -394,19 +394,19 @@ bash /mnt/d/project/openclaw_yolo/start-http-client.sh get-job --job-id <job_id>
 4. 读取 summary：
 
 ```powershell
-openclaw-yolo get-summary --trial-id trial_001
+python .\bin\openclaw-yolo-http-client.py get-summary --trial-id trial_001
 ```
 
 5. 生成下一轮建议：
 
 ```powershell
-openclaw-yolo propose-next --experiment-id exp_002
+python .\bin\openclaw-yolo-http-client.py propose-next --experiment-id exp_002
 ```
 
 6. 应用通过校验的建议并继续：
 
 ```powershell
-openclaw-yolo continue --experiment-id exp_002
+python .\bin\openclaw-yolo-http-client.py continue --experiment-id exp_002
 ```
 
 ## 当前还可以继续增强的方向

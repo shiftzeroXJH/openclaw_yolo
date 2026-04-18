@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import shutil
 import stat
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,7 @@ class ServiceError(RuntimeError):
 
 OPENCLAW_SESSIONS_PATH = "~/.openclaw/agents/main/sessions/sessions.json"
 OPENCLAW_NOTIFY_SCRIPT = "/home/shiftzero/bin/openclaw_notify.sh"
+STALE_EMPTY_TASK_TTL_HOURS = 2
 
 
 def _compact_search_space(search_space: dict[str, Any]) -> dict[str, str]:
@@ -161,6 +163,10 @@ def _notify_status(latest_event: dict[str, Any] | None) -> dict[str, Any] | None
     return result
 
 
+def _stale_task_cutoff_iso(max_age_hours: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).replace(microsecond=0).isoformat()
+
+
 def _notify_openclaw_session(session_id: str, message: str) -> None:
     command = (
         f"{shlex.quote(OPENCLAW_NOTIFY_SCRIPT)} "
@@ -243,6 +249,7 @@ class OrchestratorService:
         confirm_timeout: int,
         initial_overrides: dict[str, Any],
     ) -> dict[str, Any]:
+        self._cleanup_stale_empty_tasks()
         normalized_session_key = session_key.strip()
         if not normalized_session_key:
             raise ServiceError("session_key is required")
@@ -294,6 +301,7 @@ class OrchestratorService:
         }
 
     def list_tasks(self, compact: bool = False) -> dict[str, Any]:
+        self._cleanup_stale_empty_tasks()
         experiments = self.repo.list_experiments()
         if compact:
             return {
@@ -639,3 +647,22 @@ class OrchestratorService:
                 },
                 trial_id,
             )
+
+    def _cleanup_stale_empty_tasks(self) -> None:
+        stale_experiments = self.repo.stale_unstarted_experiments(
+            _stale_task_cutoff_iso(STALE_EMPTY_TASK_TTL_HOURS),
+            STATE_READY,
+        )
+        for config in stale_experiments:
+            experiment_dir = Path(config.save_root).resolve() / "experiments" / config.experiment_id
+            self.repo.delete_events_for_experiment(config.experiment_id)
+            self.repo.delete_experiment(config.experiment_id)
+            if experiment_dir.exists():
+                try:
+                    save_root = Path(config.save_root).resolve()
+                    experiments_root = (save_root / "experiments").resolve()
+                    resolved_experiment_dir = experiment_dir.resolve()
+                    if experiments_root in resolved_experiment_dir.parents:
+                        shutil.rmtree(resolved_experiment_dir, onerror=_handle_rmtree_error)
+                except Exception:
+                    continue
