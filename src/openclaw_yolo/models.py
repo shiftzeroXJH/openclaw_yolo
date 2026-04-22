@@ -50,8 +50,11 @@ class TrialRecord:
 class Summary:
     trial_id: str
     basic_info: dict[str, Any]
+    metric_context: dict[str, Any]
     final_metrics: dict[str, Any]
+    metric_breakdown: dict[str, Any]
     delta_vs_prev: dict[str, Any]
+    metric_breakdown_delta_vs_prev: dict[str, Any]
     training_dynamics: dict[str, Any]
     warnings: list[str]
     resource: dict[str, Any]

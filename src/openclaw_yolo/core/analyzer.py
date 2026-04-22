@@ -7,6 +7,45 @@ from typing import Any
 from openclaw_yolo.models import Summary
 
 
+TASK_METRIC_PROFILES: dict[str, dict[str, Any]] = {
+    "detection": {
+        "primary_component": "box",
+        "components": {
+            "box": {
+                "metric_suffixes": ("B", ""),
+                "train_loss": ("train/box_loss", "train/loss"),
+                "val_loss": ("val/box_loss", "val/loss"),
+            }
+        },
+    },
+    "segment": {
+        "primary_component": "mask",
+        "components": {
+            "box": {
+                "metric_suffixes": ("B", ""),
+                "train_loss": ("train/box_loss", "train/loss"),
+                "val_loss": ("val/box_loss", "val/loss"),
+            },
+            "mask": {
+                "metric_suffixes": ("M",),
+                "train_loss": ("train/seg_loss", "train/loss"),
+                "val_loss": ("val/seg_loss", "val/loss"),
+            },
+        },
+    },
+    "obb": {
+        "primary_component": "obb",
+        "components": {
+            "obb": {
+                "metric_suffixes": ("O", "B", ""),
+                "train_loss": ("train/box_loss", "train/loss"),
+                "val_loss": ("val/box_loss", "val/loss"),
+            }
+        },
+    },
+}
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         if value in ("", None):
@@ -31,11 +70,37 @@ def _column_value(row: dict[str, Any], names: tuple[str, ...]) -> float | None:
     return None
 
 
-def _loss_trend(rows: list[dict[str, Any]]) -> str:
+def _metric_column_names(metric_name: str, suffixes: tuple[str, ...]) -> tuple[str, ...]:
+    names: list[str] = []
+    for suffix in suffixes:
+        if suffix:
+            names.append(f"metrics/{metric_name}({suffix})")
+        else:
+            names.append(f"metrics/{metric_name}")
+    return tuple(names)
+
+
+def _extract_metric_set(row: dict[str, Any], suffixes: tuple[str, ...]) -> dict[str, float | None]:
+    return {
+        "precision": _column_value(row, _metric_column_names("precision", suffixes)),
+        "recall": _column_value(row, _metric_column_names("recall", suffixes)),
+        "map50": _column_value(row, _metric_column_names("mAP50", suffixes)),
+        "map50_95": _column_value(row, _metric_column_names("mAP50-95", suffixes)),
+    }
+
+
+def _normalize_metric_set(metrics: dict[str, float | None]) -> dict[str, float]:
+    return {
+        key: round(float(value or 0.0), 6)
+        for key, value in metrics.items()
+    }
+
+
+def _loss_trend(rows: list[dict[str, Any]], loss_names: tuple[str, ...]) -> str:
     if len(rows) < 3:
         return "unknown"
 
-    values = [_column_value(row, ("train/box_loss", "train/loss")) for row in rows]
+    values = [_column_value(row, loss_names) for row in rows]
     values = [value for value in values if value is not None]
     if len(values) < 3:
         return "unknown"
@@ -50,12 +115,16 @@ def _loss_trend(rows: list[dict[str, Any]]) -> str:
     return "oscillating"
 
 
-def _detect_overfitting(rows: list[dict[str, Any]]) -> str:
+def _detect_overfitting(
+    rows: list[dict[str, Any]],
+    train_loss_names: tuple[str, ...],
+    metric_suffixes: tuple[str, ...],
+) -> str:
     if len(rows) < 5:
         return "none"
     tail = rows[-5:]
-    train_losses = [_column_value(row, ("train/box_loss", "train/loss")) for row in tail]
-    metrics = [_column_value(row, ("metrics/mAP50-95(B)", "metrics/mAP50-95")) for row in tail]
+    train_losses = [_column_value(row, train_loss_names) for row in tail]
+    metrics = [_column_value(row, _metric_column_names("mAP50-95", metric_suffixes)) for row in tail]
     train_losses = [value for value in train_losses if value is not None]
     metrics = [value for value in metrics if value is not None]
     if len(train_losses) < 3 or len(metrics) < 3:
@@ -65,10 +134,14 @@ def _detect_overfitting(rows: list[dict[str, Any]]) -> str:
     return "none"
 
 
-def _plateau(rows: list[dict[str, Any]], min_delta: float = 0.002) -> tuple[bool, int | None]:
+def _plateau(
+    rows: list[dict[str, Any]],
+    metric_suffixes: tuple[str, ...],
+    min_delta: float = 0.002,
+) -> tuple[bool, int | None]:
     if len(rows) < 6:
         return False, None
-    values = [_column_value(row, ("metrics/mAP50-95(B)", "metrics/mAP50-95")) for row in rows]
+    values = [_column_value(row, _metric_column_names("mAP50-95", metric_suffixes)) for row in rows]
     values = [value for value in values if value is not None]
     if len(values) < 6:
         return False, None
@@ -83,6 +156,7 @@ def _plateau(rows: list[dict[str, Any]], min_delta: float = 0.002) -> tuple[bool
 
 def build_summary(
     trial_id: str,
+    task_type: str,
     run_dir: str,
     params: dict[str, Any],
     previous_summary: dict[str, Any] | None = None,
@@ -96,28 +170,38 @@ def build_summary(
     if not rows:
         raise ValueError("results.csv is empty")
 
+    profile = TASK_METRIC_PROFILES.get(task_type, TASK_METRIC_PROFILES["detection"])
+    primary_component = profile["primary_component"]
+    component_specs = profile["components"]
     last_row = rows[-1]
-    best_map = max(
-        (
-            _column_value(row, ("metrics/mAP50-95(B)", "metrics/mAP50-95")) or 0.0
-            for row in rows
-        ),
-        default=0.0,
-    )
+    metric_breakdown_raw = {
+        component: _extract_metric_set(last_row, spec["metric_suffixes"])
+        for component, spec in component_specs.items()
+    }
+    available_components = [
+        component
+        for component, metrics in metric_breakdown_raw.items()
+        if any(value is not None for value in metrics.values())
+    ]
+    primary_spec = component_specs[primary_component]
+    primary_metric_names = _metric_column_names("mAP50-95", primary_spec["metric_suffixes"])
+    best_map = max((_column_value(row, primary_metric_names) or 0.0 for row in rows), default=0.0)
     best_epoch = next(
         (
             index + 1
             for index, row in enumerate(rows)
-            if (_column_value(row, ("metrics/mAP50-95(B)", "metrics/mAP50-95")) or 0.0) == best_map
+            if (_column_value(row, primary_metric_names) or 0.0) == best_map
         ),
         len(rows),
     )
-    precision = _column_value(last_row, ("metrics/precision(B)", "metrics/precision")) or 0.0
-    recall = _column_value(last_row, ("metrics/recall(B)", "metrics/recall")) or 0.0
-    map50 = _column_value(last_row, ("metrics/mAP50(B)", "metrics/mAP50")) or 0.0
-    map50_95 = _column_value(last_row, ("metrics/mAP50-95(B)", "metrics/mAP50-95")) or 0.0
-    plateau, plateau_epoch = _plateau(rows)
-    overfitting = _detect_overfitting(rows)
+    primary_metrics = metric_breakdown_raw[primary_component]
+    metric_breakdown = {
+        component: _normalize_metric_set(metrics)
+        for component, metrics in metric_breakdown_raw.items()
+        if component in available_components
+    }
+    plateau, plateau_epoch = _plateau(rows, primary_spec["metric_suffixes"])
+    overfitting = _detect_overfitting(rows, primary_spec["train_loss"], primary_spec["metric_suffixes"])
     epoch_time = _column_value(last_row, ("time", "epoch_time"))
     gpu_mem = _column_value(last_row, ("gpu_mem",))
     warnings: list[str] = []
@@ -127,9 +211,23 @@ def build_summary(
         warnings.append("possible_overfitting")
 
     prev_metrics = (previous_summary or {}).get("final_metrics", {})
+    prev_breakdown = (previous_summary or {}).get("metric_breakdown", {})
     delta_vs_prev = {
-        "map50_95": round(map50_95 - float(prev_metrics.get("map50_95", 0.0)), 6),
-        "recall": round(recall - float(prev_metrics.get("recall", 0.0)), 6),
+        "map50_95": round(float(primary_metrics.get("map50_95") or 0.0) - float(prev_metrics.get("map50_95", 0.0)), 6),
+        "recall": round(float(primary_metrics.get("recall") or 0.0) - float(prev_metrics.get("recall", 0.0)), 6),
+    }
+    metric_breakdown_delta_vs_prev = {
+        component: {
+            "map50_95": round(
+                float(metrics.get("map50_95", 0.0)) - float(prev_breakdown.get(component, {}).get("map50_95", 0.0)),
+                6,
+            ),
+            "recall": round(
+                float(metrics.get("recall", 0.0)) - float(prev_breakdown.get(component, {}).get("recall", 0.0)),
+                6,
+            ),
+        }
+        for component, metrics in metric_breakdown.items()
     }
     return Summary(
         trial_id=trial_id,
@@ -140,18 +238,26 @@ def build_summary(
             "best_epoch": best_epoch,
             "train_time_sec": None if epoch_time is None else round(epoch_time * len(rows), 3),
         },
-        final_metrics={
-            "precision": round(precision, 6),
-            "recall": round(recall, 6),
-            "map50": round(map50, 6),
-            "map50_95": round(map50_95, 6),
+        metric_context={
+            "task_type": task_type,
+            "primary_component": primary_component,
+            "available_components": available_components,
         },
+        final_metrics={
+            "precision": round(float(primary_metrics.get("precision") or 0.0), 6),
+            "recall": round(float(primary_metrics.get("recall") or 0.0), 6),
+            "map50": round(float(primary_metrics.get("map50") or 0.0), 6),
+            "map50_95": round(float(primary_metrics.get("map50_95") or 0.0), 6),
+        },
+        metric_breakdown=metric_breakdown,
         delta_vs_prev=delta_vs_prev,
+        metric_breakdown_delta_vs_prev=metric_breakdown_delta_vs_prev,
         training_dynamics={
-            "loss_trend": _loss_trend(rows),
+            "loss_trend": _loss_trend(rows, primary_spec["train_loss"]),
             "plateau": plateau,
             "plateau_epoch": plateau_epoch,
             "overfitting": overfitting,
+            "primary_component": primary_component,
         },
         warnings=warnings,
         resource={

@@ -68,8 +68,11 @@ def _compact_search_space(search_space: dict[str, Any]) -> dict[str, str]:
 
 def _compact_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return {
+        "metric_context": summary.get("metric_context", {}),
         "final_metrics": summary.get("final_metrics", {}),
+        "metric_breakdown": summary.get("metric_breakdown", {}),
         "delta_vs_prev": summary.get("delta_vs_prev", {}),
+        "metric_breakdown_delta_vs_prev": summary.get("metric_breakdown_delta_vs_prev", {}),
         "training_dynamics": summary.get("training_dynamics", {}),
         "warnings": summary.get("warnings", []),
         "resource": summary.get("resource", {}),
@@ -80,8 +83,11 @@ def _compact_summary(summary: dict[str, Any]) -> dict[str, Any]:
 
 def _notification_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return {
+        "metric_context": summary.get("metric_context", {}),
         "final_metrics": summary.get("final_metrics", {}),
+        "metric_breakdown": summary.get("metric_breakdown", {}),
         "delta_vs_prev": summary.get("delta_vs_prev", {}),
+        "metric_breakdown_delta_vs_prev": summary.get("metric_breakdown_delta_vs_prev", {}),
         "training_dynamics": summary.get("training_dynamics", {}),
         "warnings": summary.get("warnings", []),
         "resource": summary.get("resource", {}),
@@ -472,7 +478,13 @@ class OrchestratorService:
             if summaries:
                 previous_summary = summaries[-1]
             self.repo.update_experiment_status(experiment_id, STATE_ANALYZING)
-            summary = build_summary(trial_id, run_dir, trial_params, previous_summary).to_dict()
+            summary = build_summary(
+                trial_id,
+                config.task_type,
+                run_dir,
+                trial_params,
+                previous_summary,
+            ).to_dict()
             summary_path = trial_dir / SUMMARY_FILENAME
             write_json(summary_path, summary)
             next_status = self._completion_status(config, summary, iteration)
@@ -508,8 +520,11 @@ class OrchestratorService:
         if compact:
             return {
                 "trial_id": trial_id,
+                "metric_context": summary.get("metric_context", {}),
                 "final_metrics": summary.get("final_metrics", {}),
+                "metric_breakdown": summary.get("metric_breakdown", {}),
                 "delta_vs_prev": summary.get("delta_vs_prev", {}),
+                "metric_breakdown_delta_vs_prev": summary.get("metric_breakdown_delta_vs_prev", {}),
                 "training_dynamics": summary.get("training_dynamics", {}),
                 "warnings": summary.get("warnings", []),
             }
