@@ -1,0 +1,101 @@
+export type MetricGoal = {
+  metric: string;
+  target: number;
+};
+
+export type Experiment = {
+  experiment_id: string;
+  description: string;
+  status: string;
+  task_type: string;
+  dataset_root: string;
+  dataset_yaml?: string;
+  pretrained_model: string;
+  goal: MetricGoal;
+  trial_count: number;
+  best_metric?: {
+    trial_id: string;
+    iteration: number;
+    metric: string;
+    value: number;
+  };
+  latest_trial?: any; // Define properly if needed
+};
+
+export const api = {
+  async getExperiments(): Promise<{ experiments: Experiment[] }> {
+    const res = await fetch('/api/experiments');
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async createExperiment(payload: any) {
+    const res = await fetch('/api/experiments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async getExperiment(experimentId: string) {
+    const res = await fetch(`/api/experiments/${experimentId}`);
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async getComparison(experimentId: string) {
+    const res = await fetch(`/api/experiments/${experimentId}/comparison`);
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async getParams(experimentId: string) {
+    const res = await fetch(`/api/experiments/${experimentId}/params`);
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async validateParams(experimentId: string, payload: any) {
+    const res = await fetch(`/api/experiments/${experimentId}/params/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ params: payload })
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async runTrial(experimentId: string, payload: any) {
+    const res = await fetch(`/api/experiments/${experimentId}/trials/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async importTrial(experimentId: string, payload: any) {
+    const res = await fetch(`/api/experiments/${experimentId}/trials/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async getJob(jobId: string) {
+    const res = await fetch(`/jobs/${jobId}`);
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async getTrialSummary(trialId: string) {
+    const res = await fetch(`/api/trials/${trialId}/summary`);
+    if (!res.ok) throw await res.json();
+    return res.json();
+  }
+};

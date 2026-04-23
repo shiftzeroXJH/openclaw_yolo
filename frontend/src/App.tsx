@@ -1,0 +1,80 @@
+import { useEffect, useState } from 'react'
+import { api, type Experiment } from './api'
+import { ExperimentList } from './components/ExperimentList'
+import { Workspace } from './components/Workspace'
+import { CreateExperimentDialog } from './components/CreateExperimentDialog'
+import { ActivitySquare, Plus } from 'lucide-react'
+
+function App() {
+  const [experiments, setExperiments] = useState<Experiment[]>([])
+  const [activeExperimentId, setActiveExperimentId] = useState<string | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  const loadExperiments = async () => {
+    try {
+      const data = await api.getExperiments()
+      setExperiments(data.experiments || [])
+      if (data.experiments?.length > 0 && !activeExperimentId) {
+        setActiveExperimentId(data.experiments[0].experiment_id)
+      }
+    } catch (err) {
+      console.error('Error loading experiments:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadExperiments()
+  }, [])
+
+  return (
+    <div className="flex h-screen overflow-hidden">
+      {/* Sidebar */}
+      <div className="flex-col" style={{ width: '320px', borderRight: '1px solid var(--panel-border)', backgroundColor: 'var(--panel-bg)'}}>
+        <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--panel-border)'}}>
+          <div className="flex items-center gap-2" style={{ fontWeight: 600, color: 'var(--primary-color)'}}>
+            <ActivitySquare size={20} />
+            <span>YOLO 实验面板</span>
+          </div>
+          <button className="btn btn-primary" style={{ padding: '0.25rem 0.5rem' }} onClick={() => setShowCreate(true)} title="创建实验">
+            <Plus size={16} />
+          </button>
+        </div>
+        <div className="flex-col" style={{ overflowY: 'auto', flex: 1 }}>
+          <ExperimentList 
+            experiments={experiments} 
+            activeId={activeExperimentId} 
+            onSelect={setActiveExperimentId} 
+          />
+        </div>
+      </div>
+
+      {/* Main Workspace */}
+      <div className="flex-col" style={{ flex: 1, backgroundColor: 'var(--bg-color)', overflowY: 'auto', position: 'relative' }}>
+        {activeExperimentId ? (
+          <Workspace experimentId={activeExperimentId} />
+        ) : (
+          <div className="flex items-center" style={{ justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+            {loading ? '正在加载工作台...' : '当前无选中实验'}
+          </div>
+        )}
+      </div>
+
+      {/* Modals */}
+      {showCreate && (
+        <CreateExperimentDialog 
+          onClose={() => setShowCreate(false)} 
+          onCreated={(id) => {
+            setShowCreate(false)
+            loadExperiments()
+            setActiveExperimentId(id)
+          }} 
+        />
+      )}
+    </div>
+  )
+}
+
+export default App
