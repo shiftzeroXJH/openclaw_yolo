@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 import uvicorn
 
 from openclaw_yolo.service import OrchestratorService, ServiceError
@@ -211,6 +212,31 @@ def get_summary(trial_id: str, compact: bool = False) -> dict[str, Any]:
 @app.get("/inspect-dataset")
 def inspect_dataset(dataset_root: str) -> dict[str, Any]:
     return _invoke_sync("inspect-dataset", lambda: service.inspect_dataset(dataset_root))
+
+
+@app.get("/api/experiments/{experiment_id}/curves")
+def get_experiment_curves(experiment_id: str) -> dict[str, Any]:
+    return _invoke_sync(
+        "get-experiment-curves",
+        lambda: service.get_experiment_curves(experiment_id),
+    )
+
+
+@app.get("/api/trials/{trial_id}/visualizations")
+def get_trial_visualizations(trial_id: str) -> dict[str, Any]:
+    return _invoke_sync(
+        "get-trial-visualizations",
+        lambda: service.get_trial_visualizations(trial_id),
+    )
+
+
+@app.get("/api/trials/{trial_id}/files/{filename}")
+def get_trial_file(trial_id: str, filename: str) -> FileResponse:
+    try:
+        path = service.get_trial_file_path(trial_id, filename)
+        return FileResponse(path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc), "action": "get-trial-file"})
 
 
 @app.get("/jobs/{job_id}")

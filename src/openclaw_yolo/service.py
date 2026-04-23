@@ -1066,3 +1066,50 @@ class OrchestratorService:
                         shutil.rmtree(resolved_experiment_dir, onerror=_handle_rmtree_error)
                 except Exception:
                     continue
+
+    def get_experiment_curves(self, experiment_id: str) -> dict[str, Any]:
+        trials = self.repo.list_trials(experiment_id)
+        curves = {}
+        for trial in trials:
+            results_csv = Path(trial.run_dir) / "results.csv"
+            if not results_csv.exists():
+                continue
+            
+            import csv
+            trial_data = []
+            with open(results_csv, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    cleaned_row = {}
+                    for k, v in row.items():
+                        if k and v:
+                            v_str = str(v).strip()
+                            if v_str:
+                                try:
+                                    cleaned_row[str(k).strip()] = float(v_str) if '.' in v_str else int(v_str)
+                                except ValueError:
+                                    pass
+                    if "epoch" in cleaned_row:
+                        trial_data.append(cleaned_row)
+            curves[trial.trial_id] = trial_data
+            
+        return {"experiment_id": experiment_id, "curves": curves}
+
+    def get_trial_visualizations(self, trial_id: str) -> dict[str, Any]:
+        trial = self.repo.get_trial(trial_id)
+        run_dir = Path(trial.run_dir)
+        visualizations = []
+        if run_dir.exists():
+            for f in sorted(run_dir.iterdir()):
+                if f.is_file() and (f.name.startswith("train_batch") or f.name.startswith("val_batch") or f.name.endswith(".png")):
+                    visualizations.append(f.name)
+        return {"trial_id": trial_id, "visualizations": visualizations}
+
+    def get_trial_file_path(self, trial_id: str, filename: str) -> str:
+        trial = self.repo.get_trial(trial_id)
+        file_path = Path(trial.run_dir) / filename
+        if not file_path.exists() or not file_path.is_file():
+            raise ServiceError("file not found")
+        if file_path.resolve().parent != Path(trial.run_dir).resolve():
+            raise ServiceError("invalid filename")
+        return str(file_path.resolve())

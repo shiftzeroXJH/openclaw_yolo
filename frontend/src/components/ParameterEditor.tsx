@@ -13,6 +13,7 @@ export function ParameterEditor({ experimentId, onRunSuccess }: Props) {
   const [loading, setLoading] = useState(false)
   const [validating, setValidating] = useState(false)
   const [validationErrors, setValidationErrors] = useState<any>({})
+  const [validationSuccess, setValidationSuccess] = useState(false)
 
   const loadParams = async () => {
     try {
@@ -28,13 +29,23 @@ export function ParameterEditor({ experimentId, onRunSuccess }: Props) {
 
   const handleValidate = async () => {
     setValidating(true)
+    setValidationSuccess(false)
     setValidationErrors({})
     try {
       const res = await api.validateParams(experimentId, params)
       if (!res.valid) {
-        setValidationErrors(res.errors || {})
+        const translated: any = {}
+        for (const [k, v] of Object.entries(res.errors || {})) {
+          let msg = String(v)
+          if (msg.includes("invalid value")) msg = msg.replace(/invalid value for '.*?': (.*)/, '选择的值不合法或类型错乱')
+          else if (msg.includes("missing required")) msg = '该参数不能为空'
+          translated[k] = msg
+        }
+        setValidationErrors(translated)
         return false
       }
+      setValidationSuccess(true)
+      setTimeout(() => setValidationSuccess(false), 3000)
       return true
     } catch (e: any) {
       setValidationErrors({ general: e?.detail?.error || '参数校验失败' })
@@ -72,6 +83,12 @@ export function ParameterEditor({ experimentId, onRunSuccess }: Props) {
       </div>
 
       <div className="flex-col gap-4 overflow-y-auto pr-2" style={{ flex: 1 }}>
+        {validationSuccess && (
+          <div className="p-2 text-success" style={{ backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: 4, display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
+            ✅ 参数校验通过！可以安全运行此实验。
+          </div>
+        )}
+        
         {validationErrors.general && (
           <div className="p-2 text-danger" style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', borderRadius: 4 }}>
             {validationErrors.general}
@@ -95,10 +112,14 @@ export function ParameterEditor({ experimentId, onRunSuccess }: Props) {
                 <select 
                   className="input" 
                   style={{ borderColor: isError ? 'var(--danger-color)' : undefined }}
-                  value={params[key] || ''} 
-                  onChange={e => setParams({...params, [key]: e.target.value})}
+                  value={params[key] ?? ''} 
+                  onChange={e => {
+                    const val = e.target.value;
+                    const parsed = (field.values && typeof field.values[0] === 'number') ? Number(val) : val;
+                    setParams({...params, [key]: parsed});
+                  }}
                 >
-                  <option value="" disabled>Select {key}...</option>
+                  <option value="" disabled>请选择 {key}...</option>
                   {field.values?.map((v: any) => <option key={v} value={v}>{v}</option>)}
                 </select>
               ) : (

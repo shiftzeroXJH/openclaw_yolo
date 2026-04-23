@@ -3,8 +3,9 @@ import { api } from '../api'
 import { TrialComparisonTable } from './TrialComparisonTable'
 import { ParameterEditor } from './ParameterEditor'
 import { TrialSummaryDrawer } from './TrialSummaryDrawer'
-import { Trash2 } from 'lucide-react'
+import { Trash2, Activity } from 'lucide-react'
 import { DeleteDialog } from './DeleteDialog'
+import { ExperimentCurvesDialog } from './ExperimentCurvesDialog'
 
 interface Props {
   experimentId: string
@@ -17,6 +18,7 @@ export function Workspace({ experimentId, onDeleted }: Props) {
   const [selectedTrialId, setSelectedTrialId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [showCurves, setShowCurves] = useState(false)
 
   const loadData = async () => {
     setLoading(true)
@@ -80,8 +82,13 @@ export function Workspace({ experimentId, onDeleted }: Props) {
 
         <div className="card flex-col flex-1 overflow-hidden" style={{ padding: 0 }}>
           <div className="p-4 border-b border-panel-border" style={{ borderBottom: '1px solid var(--panel-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: '1rem' }}>历次试验对比图表</h2>
-            <button className="btn" onClick={loadData}>刷新</button>
+            <h2 style={{ fontSize: '1rem' }}>历次试验对比汇总</h2>
+            <div className="flex gap-2">
+              <button className="btn" style={{ borderColor: 'var(--primary-color)', color: 'var(--primary-color)', display: 'flex', alignItems: 'center', gap: '0.25rem' }} onClick={() => setShowCurves(true)}>
+                <Activity size={16} /> 上帝视野联合曲线
+              </button>
+              <button className="btn" onClick={loadData}>刷新数据</button>
+            </div>
           </div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
             {comparison ? (
@@ -126,6 +133,13 @@ export function Workspace({ experimentId, onDeleted }: Props) {
               }
             }
           }}
+        />
+      )}
+
+      {showCurves && (
+        <ExperimentCurvesDialog
+          experimentId={experimentId}
+          onClose={() => setShowCurves(false)}
         />
       )}
     </div>

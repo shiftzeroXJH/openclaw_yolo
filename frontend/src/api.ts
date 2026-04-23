@@ -113,5 +113,17 @@ export const api = {
     });
     if (!res.ok) throw await res.json();
     return res.json();
+  },
+
+  async getExperimentCurves(experimentId: string) {
+    const res = await fetch(`/api/experiments/${experimentId}/curves`);
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async getTrialVisualizations(trialId: string) {
+    const res = await fetch(`/api/trials/${trialId}/visualizations`);
+    if (!res.ok) throw await res.json();
+    return res.json();
   }
 };
