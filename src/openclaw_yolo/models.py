@@ -44,6 +44,9 @@ class TrialRecord:
     run_dir: str
     summary_path: str | None = None
     metrics: dict[str, Any] = field(default_factory=dict)
+    source: str = "trained"
+    note: str = ""
+    reason: str = ""
 
 
 @dataclass

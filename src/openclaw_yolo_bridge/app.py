@@ -41,6 +41,94 @@ def list_tasks(compact: bool = False) -> dict[str, Any]:
     return _invoke_sync("list-tasks", lambda: service.list_tasks(compact=compact))
 
 
+@app.get("/api/experiments")
+def list_experiments() -> dict[str, Any]:
+    return _invoke_sync("list-experiments", service.list_experiments)
+
+
+@app.post("/api/experiments")
+def create_experiment(payload: dict[str, Any]) -> dict[str, Any]:
+    body = dict(payload)
+    return _invoke_sync(
+        "create-experiment",
+        lambda: service.create_experiment(
+            description=body.get("description", ""),
+            task_type=body["task_type"],
+            dataset_root=body["dataset_root"],
+            dataset_yaml=body.get("dataset_yaml"),
+            pretrained=body["pretrained"],
+            save_root=body["save_root"],
+            goal=body["goal"],
+            initial_params=body.get("initial_params"),
+            session_key=body.get("session_key"),
+            auto_iterate=bool(body.get("auto_iterate", False)),
+            confirm_timeout=int(body.get("confirm_timeout", 60)),
+        ),
+    )
+
+
+@app.get("/api/experiments/{experiment_id}")
+def get_experiment(experiment_id: str) -> dict[str, Any]:
+    return _invoke_sync("get-experiment", lambda: service.get_experiment_detail(experiment_id))
+
+
+@app.get("/api/experiments/{experiment_id}/comparison")
+def compare_experiment(experiment_id: str) -> dict[str, Any]:
+    return _invoke_sync("compare-experiment", lambda: service.compare_experiment(experiment_id))
+
+
+@app.get("/api/experiments/{experiment_id}/params")
+def get_experiment_params(experiment_id: str) -> dict[str, Any]:
+    return _invoke_sync("get-experiment-params", lambda: service.get_param_metadata(experiment_id))
+
+
+@app.post("/api/experiments/{experiment_id}/params/validate")
+def validate_experiment_params(experiment_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    body = dict(payload)
+    return _invoke_sync(
+        "validate-experiment-params",
+        lambda: service.validate_params(
+            experiment_id,
+            params=body.get("params"),
+            param_updates=body.get("param_updates"),
+        ),
+    )
+
+
+@app.post("/api/experiments/{experiment_id}/trials/run")
+def run_experiment_trial(experiment_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = dict(payload or {})
+    return _invoke_async(
+        "run-experiment-trial",
+        experiment_id,
+        lambda: service.run_trial(
+            experiment_id,
+            params=body.get("params"),
+            note=body.get("note"),
+            reason=body.get("reason"),
+        ),
+    )
+
+
+@app.post("/api/experiments/{experiment_id}/trials/import")
+def import_experiment_trial(experiment_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    body = dict(payload)
+    return _invoke_sync(
+        "import-experiment-trial",
+        lambda: service.import_run(
+            experiment_id,
+            run_dir=body["run_dir"],
+            params=body.get("params"),
+            note=body.get("note"),
+        ),
+    )
+
+
+@app.get("/api/trials/{trial_id}/summary")
+def get_api_summary(trial_id: str, compact: bool = False) -> dict[str, Any]:
+    return _invoke_sync("get-api-summary", lambda: service.get_summary(trial_id, compact=compact))
+
+
 @app.get("/tasks/{experiment_id}")
 def show_task(experiment_id: str, compact: bool = False) -> dict[str, Any]:
     return _invoke_sync("show-task", lambda: service.show_task(experiment_id, compact=compact))

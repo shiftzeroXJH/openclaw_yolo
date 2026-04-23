@@ -22,10 +22,12 @@ from openclaw_yolo.constants import (
     STATE_WAITING,
     STOP_CONDITIONS,
     SUMMARY_FILENAME,
+    TASK_BASELINES,
     TRIAL_CONFIG_FILENAME,
 )
 from openclaw_yolo.core.analyzer import build_summary
 from openclaw_yolo.core.baseline import build_initial_params
+from openclaw_yolo.core.constraints import validate_param_value
 from openclaw_yolo.core.dataset import inspect_dataset
 from openclaw_yolo.core.param_search import ProposalValidationError, validate_continue_request
 from openclaw_yolo.core.trainer import TrainingError, run_training
@@ -235,26 +237,29 @@ class OrchestratorService:
     def inspect_dataset(self, dataset_root: str) -> dict[str, Any]:
         return {"yaml_candidates": inspect_dataset(dataset_root)}
 
-    def create_task(
+    def create_experiment(
         self,
         *,
         description: str,
-        session_key: str,
         task_type: str,
         dataset_root: str,
         dataset_yaml: str | None,
         pretrained: str,
         save_root: str,
         goal: dict[str, Any],
-        auto_iterate: bool,
-        confirm_timeout: int,
-        initial_overrides: dict[str, Any],
+        initial_params: dict[str, Any] | None = None,
+        session_key: str | None = None,
+        auto_iterate: bool = False,
+        confirm_timeout: int = 60,
+        require_session: bool = False,
     ) -> dict[str, Any]:
         self._cleanup_stale_empty_tasks()
-        normalized_session_key = session_key.strip()
-        if not normalized_session_key:
+        normalized_session_key = (session_key or "").strip()
+        if require_session and not normalized_session_key:
             raise ServiceError("session_key is required")
-        _resolve_session_id(normalized_session_key)
+        if normalized_session_key:
+            _resolve_session_id(normalized_session_key)
+
         candidates = inspect_dataset(dataset_root)
         if dataset_yaml is None:
             if len(candidates) != 1:
@@ -271,6 +276,7 @@ class OrchestratorService:
         _validate_pretrained_model(resolved_pretrained)
         experiment_id = self.repo.next_experiment_id()
         experiment_dir = ensure_dir(Path(save_root) / "experiments" / experiment_id)
+        initial_overrides = dict(initial_params or {})
         config = ExperimentConfig(
             experiment_id=experiment_id,
             description=description.strip(),
@@ -301,6 +307,36 @@ class OrchestratorService:
             "experiment_dir": str(experiment_dir),
         }
 
+    def create_task(
+        self,
+        *,
+        description: str,
+        session_key: str,
+        task_type: str,
+        dataset_root: str,
+        dataset_yaml: str | None,
+        pretrained: str,
+        save_root: str,
+        goal: dict[str, Any],
+        auto_iterate: bool,
+        confirm_timeout: int,
+        initial_overrides: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.create_experiment(
+            description=description,
+            session_key=session_key,
+            task_type=task_type,
+            dataset_root=dataset_root,
+            dataset_yaml=dataset_yaml,
+            pretrained=pretrained,
+            save_root=save_root,
+            goal=goal,
+            auto_iterate=auto_iterate,
+            confirm_timeout=confirm_timeout,
+            initial_params=initial_overrides,
+            require_session=True,
+        )
+
     def list_tasks(self, compact: bool = False) -> dict[str, Any]:
         self._cleanup_stale_empty_tasks()
         experiments = self.repo.list_experiments()
@@ -330,6 +366,50 @@ class OrchestratorService:
                 }
                 for item in experiments
             ]
+        }
+
+    def list_experiments(self) -> dict[str, Any]:
+        self._cleanup_stale_empty_tasks()
+        experiments = self.repo.list_experiments()
+        items: list[dict[str, Any]] = []
+        for config in experiments:
+            comparison = self.compare_experiment(config.experiment_id)
+            trials = self.repo.list_trials(config.experiment_id)
+            latest_trial = trials[-1] if trials else None
+            items.append(
+                {
+                    "experiment_id": config.experiment_id,
+                    "description": config.description,
+                    "status": config.status,
+                    "task_type": config.task_type,
+                    "dataset_root": config.dataset_root,
+                    "dataset_yaml": config.dataset_yaml,
+                    "pretrained_model": config.pretrained_model,
+                    "goal": config.goal.__dict__,
+                    "trial_count": len(trials),
+                    "best_metric": comparison["best_trial"],
+                    "latest_trial": None
+                    if latest_trial is None
+                    else {
+                        "trial_id": latest_trial.trial_id,
+                        "iteration": latest_trial.iteration,
+                        "status": latest_trial.status,
+                        "metrics": latest_trial.metrics,
+                        "source": latest_trial.source,
+                    },
+                }
+            )
+        return {"experiments": items}
+
+    def get_experiment_detail(self, experiment_id: str) -> dict[str, Any]:
+        config = self.repo.get_experiment(experiment_id)
+        trials = self.repo.list_trials(experiment_id)
+        return {
+            "experiment": config.to_dict(),
+            "trial_count": len(trials),
+            "latest_params": self._latest_params(config, trials),
+            "search_space": config.search_space,
+            "trials": [self._trial_row(trial) for trial in trials],
         }
 
     def show_task(self, experiment_id: str, compact: bool = False) -> dict[str, Any]:
@@ -374,6 +454,63 @@ class OrchestratorService:
                 }
                 for trial in trials
             ],
+        }
+
+    def get_param_metadata(self, experiment_id: str) -> dict[str, Any]:
+        config = self.repo.get_experiment(experiment_id)
+        trials = self.repo.list_trials(experiment_id)
+        return {
+            "experiment_id": experiment_id,
+            "task_type": config.task_type,
+            "baseline": TASK_BASELINES.get(config.task_type, {}),
+            "initial_params": config.initial_params,
+            "latest_params": self._latest_params(config, trials),
+            "editable_schema": self._editable_schema(config.search_space),
+            "search_space": config.search_space,
+        }
+
+    def validate_params(
+        self,
+        experiment_id: str,
+        *,
+        params: dict[str, Any] | None = None,
+        param_updates: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        config = self.repo.get_experiment(experiment_id)
+        trials = self.repo.list_trials(experiment_id)
+        base = self._latest_params(config, trials)
+        candidate = dict(params) if params is not None else dict(base)
+        if param_updates:
+            candidate.update(param_updates)
+
+        normalized: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+        warnings: list[str] = []
+        for key in candidate:
+            if key not in SEARCH_SPACE:
+                errors[key] = "unsupported parameter"
+        for key in SEARCH_SPACE:
+            if key not in candidate:
+                errors[key] = "missing required parameter"
+                continue
+            try:
+                normalized[key] = validate_param_value(key, candidate[key])
+            except ValueError as exc:
+                errors[key] = str(exc)
+        if int(normalized.get("workers", 1) or 0) == 0:
+            warnings.append("workers is 0; data loading may be slow")
+        if errors:
+            return {
+                "valid": False,
+                "normalized_params": normalized,
+                "errors": errors,
+                "warnings": warnings,
+            }
+        return {
+            "valid": True,
+            "normalized_params": normalized,
+            "errors": {},
+            "warnings": warnings,
         }
 
     def cancel_task(self, experiment_id: str, reason: str | None = None) -> dict[str, Any]:
@@ -443,12 +580,22 @@ class OrchestratorService:
             "warnings": warnings,
         }
 
-    def run_trial(self, experiment_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def run_trial(
+        self,
+        experiment_id: str,
+        params: dict[str, Any] | None = None,
+        *,
+        note: str | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
         config = self.repo.get_experiment(experiment_id)
         trials = self.repo.list_trials(experiment_id)
         trial_id = self.repo.next_trial_id()
         iteration = len(trials) + 1
-        trial_params = dict(params or config.initial_params)
+        validation = self.validate_params(experiment_id, params=params or config.initial_params)
+        if not validation["valid"]:
+            raise ServiceError(f"invalid trial params: {validation['errors']}")
+        trial_params = validation["normalized_params"]
         trial_dir = ensure_dir(Path(config.save_root) / "experiments" / experiment_id / trial_id)
         status = STATE_TRAINING if iteration == 1 else STATE_RETRAINING
         trial = TrialRecord(
@@ -458,11 +605,24 @@ class OrchestratorService:
             params=trial_params,
             status=status,
             run_dir=str(trial_dir),
+            source="trained",
+            note=(note or "").strip(),
+            reason=(reason or "").strip(),
         )
         write_json(trial_dir / TRIAL_CONFIG_FILENAME, trial_params)
         self.repo.create_trial(trial)
         self.repo.update_experiment_status(experiment_id, status)
-        self.repo.add_event(experiment_id, "TRIAL_STARTED", {"trial_id": trial_id, "params": trial_params}, trial_id)
+        self.repo.add_event(
+            experiment_id,
+            "TRIAL_STARTED",
+            {
+                "trial_id": trial_id,
+                "params": trial_params,
+                "note": trial.note,
+                "reason": trial.reason,
+            },
+            trial_id,
+        )
 
         try:
             training_result = run_training(
@@ -517,9 +677,16 @@ class OrchestratorService:
         if not trial.summary_path:
             raise ServiceError(f"trial has no summary yet: {trial_id}")
         summary = read_json(trial.summary_path)
+        logs = self._trial_logs(trial.run_dir)
         if compact:
             return {
                 "trial_id": trial_id,
+                "run_dir": trial.run_dir,
+                "summary_path": trial.summary_path,
+                "source": trial.source,
+                "note": trial.note,
+                "reason": trial.reason,
+                "logs": logs,
                 "metric_context": summary.get("metric_context", {}),
                 "final_metrics": summary.get("final_metrics", {}),
                 "metric_breakdown": summary.get("metric_breakdown", {}),
@@ -528,6 +695,18 @@ class OrchestratorService:
                 "training_dynamics": summary.get("training_dynamics", {}),
                 "warnings": summary.get("warnings", []),
             }
+        summary["trial"] = {
+            "trial_id": trial.trial_id,
+            "experiment_id": trial.experiment_id,
+            "iteration": trial.iteration,
+            "status": trial.status,
+            "run_dir": trial.run_dir,
+            "summary_path": trial.summary_path,
+            "source": trial.source,
+            "note": trial.note,
+            "reason": trial.reason,
+            "logs": logs,
+        }
         return summary
 
     def continue_experiment(
@@ -566,10 +745,192 @@ class OrchestratorService:
             },
             latest_trial.trial_id,
         )
-        result = self.run_trial(experiment_id, params=params)
+        result = self.run_trial(experiment_id, params=params, reason=validated["reason"])
         result["applied_updates"] = validated["param_updates"]
         result["reason"] = validated["reason"]
         return result
+
+    def import_run(
+        self,
+        experiment_id: str,
+        *,
+        run_dir: str,
+        params: dict[str, Any] | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        config = self.repo.get_experiment(experiment_id)
+        run_path = Path(run_dir)
+        if not run_path.exists():
+            raise ServiceError(f"run_dir not found: {run_dir}")
+        if not (run_path / "results.csv").exists():
+            raise ServiceError(f"results.csv not found in run_dir: {run_dir}")
+
+        config_path = run_path / TRIAL_CONFIG_FILENAME
+        raw_params = params
+        if raw_params is None and config_path.exists():
+            raw_params = read_json(config_path)
+        validation = self.validate_params(experiment_id, params=raw_params or self._latest_params(config, self.repo.list_trials(experiment_id)))
+        if not validation["valid"]:
+            raise ServiceError(f"invalid imported params: {validation['errors']}")
+        trial_params = validation["normalized_params"]
+
+        trials = self.repo.list_trials(experiment_id)
+        trial_id = self.repo.next_trial_id()
+        iteration = len(trials) + 1
+        trial_dir = ensure_dir(Path(config.save_root) / "experiments" / experiment_id / trial_id)
+        previous_summary = None
+        summaries = self.repo.recent_summaries(experiment_id, limit=1)
+        if summaries:
+            previous_summary = summaries[-1]
+        summary = build_summary(
+            trial_id,
+            config.task_type,
+            str(run_path),
+            trial_params,
+            previous_summary,
+        ).to_dict()
+        summary_path = trial_dir / SUMMARY_FILENAME
+        write_json(trial_dir / TRIAL_CONFIG_FILENAME, trial_params)
+        write_json(summary_path, summary)
+        next_status = self._completion_status(config, summary, iteration)
+        trial = TrialRecord(
+            trial_id=trial_id,
+            experiment_id=experiment_id,
+            iteration=iteration,
+            params=trial_params,
+            status=next_status,
+            run_dir=str(run_path.resolve()),
+            summary_path=str(summary_path),
+            metrics=summary["final_metrics"],
+            source="imported",
+            note=(note or "").strip(),
+        )
+        self.repo.create_trial(trial)
+        self.repo.update_experiment_status(experiment_id, next_status)
+        self.repo.add_event(
+            experiment_id,
+            "TRIAL_IMPORTED",
+            {
+                "trial_id": trial_id,
+                "run_dir": trial.run_dir,
+                "summary_path": str(summary_path),
+                "note": trial.note,
+            },
+            trial_id,
+        )
+        return {
+            "status": next_status,
+            "trial_id": trial_id,
+            "run_dir": trial.run_dir,
+            "summary_path": str(summary_path),
+            "final_metrics": summary["final_metrics"],
+        }
+
+    def compare_experiment(self, experiment_id: str) -> dict[str, Any]:
+        config = self.repo.get_experiment(experiment_id)
+        rows = [self._trial_row(trial) for trial in self.repo.list_trials(experiment_id)]
+        metric = config.goal.metric
+        best_row = None
+        best_value = None
+        for row in rows:
+            value = row.get(metric)
+            if isinstance(value, (int, float)) and (best_value is None or value > best_value):
+                best_value = float(value)
+                best_row = row
+        for row in rows:
+            row["is_best"] = bool(best_row and row["trial_id"] == best_row["trial_id"])
+        target_reached = bool(best_value is not None and best_value >= config.goal.target)
+        columns = [
+            {"key": "iteration", "label": "Iteration"},
+            {"key": "trial_id", "label": "Trial"},
+            {"key": "status", "label": "Status"},
+            {"key": "source", "label": "Source"},
+            {"key": "map50_95", "label": "mAP50-95"},
+            {"key": "map50", "label": "mAP50"},
+            {"key": "precision", "label": "Precision"},
+            {"key": "recall", "label": "Recall"},
+            {"key": "delta_map50_95", "label": "Delta mAP50-95"},
+            {"key": "best_epoch", "label": "Best Epoch"},
+            {"key": "epochs_completed", "label": "Epochs"},
+            {"key": "train_time_sec", "label": "Train Time"},
+            {"key": "gpu_mem_peak", "label": "GPU Mem"},
+            {"key": "params", "label": "Params"},
+            {"key": "note", "label": "Note"},
+        ]
+        return {
+            "experiment_id": experiment_id,
+            "goal": config.goal.__dict__,
+            "target_reached": target_reached,
+            "best_trial": None
+            if best_row is None
+            else {
+                "trial_id": best_row["trial_id"],
+                "iteration": best_row["iteration"],
+                "metric": metric,
+                "value": best_value,
+            },
+            "columns": columns,
+            "rows": rows,
+        }
+
+    def _latest_params(
+        self,
+        config: ExperimentConfig,
+        trials: list[TrialRecord],
+    ) -> dict[str, Any]:
+        for trial in reversed(trials):
+            if trial.params:
+                return dict(trial.params)
+        return dict(config.initial_params)
+
+    def _editable_schema(self, search_space: dict[str, Any]) -> dict[str, Any]:
+        schema: dict[str, Any] = {}
+        for name, spec in search_space.items():
+            field = dict(spec)
+            field["name"] = name
+            field["required"] = True
+            schema[name] = field
+        return schema
+
+    def _trial_logs(self, run_dir: str) -> dict[str, str | None]:
+        run_path = Path(run_dir)
+        stdout_log = run_path / "stdout.log"
+        stderr_log = run_path / "stderr.log"
+        return {
+            "stdout": str(stdout_log) if stdout_log.exists() else None,
+            "stderr": str(stderr_log) if stderr_log.exists() else None,
+        }
+
+    def _trial_row(self, trial: TrialRecord) -> dict[str, Any]:
+        summary = read_json(trial.summary_path) if trial.summary_path and Path(trial.summary_path).exists() else {}
+        final_metrics = summary.get("final_metrics", trial.metrics or {})
+        delta = summary.get("delta_vs_prev", {})
+        basic = summary.get("basic_info", {})
+        resource = summary.get("resource", {})
+        params = summary.get("params", trial.params)
+        return {
+            "iteration": trial.iteration,
+            "trial_id": trial.trial_id,
+            "status": trial.status,
+            "source": trial.source,
+            "precision": final_metrics.get("precision"),
+            "recall": final_metrics.get("recall"),
+            "map50": final_metrics.get("map50"),
+            "map50_95": final_metrics.get("map50_95"),
+            "delta_map50_95": delta.get("map50_95"),
+            "delta_recall": delta.get("recall"),
+            "best_epoch": basic.get("best_epoch"),
+            "epochs_completed": basic.get("epochs_completed"),
+            "train_time_sec": basic.get("train_time_sec"),
+            "gpu_mem_peak": resource.get("gpu_mem_peak"),
+            "params": params,
+            "run_dir": trial.run_dir,
+            "summary_path": trial.summary_path,
+            "note": trial.note,
+            "reason": trial.reason,
+            "logs": self._trial_logs(trial.run_dir),
+            "is_best": False,
+        }
 
     def _completion_status(
         self,
@@ -590,6 +951,8 @@ class OrchestratorService:
         trial_id: str,
         summary: dict[str, Any],
     ) -> None:
+        if not config.session_key:
+            return
         try:
             session_id = _resolve_session_id(config.session_key)
             compact_summary = _notification_summary(summary)

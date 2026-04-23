@@ -18,7 +18,7 @@ class Repository:
     def _connect(self) -> sqlite3.Connection:
         if self.db_path == ":memory:":
             if self._memory_connection is None:
-                self._memory_connection = sqlite3.connect(self.db_path)
+                self._memory_connection = sqlite3.connect(self.db_path, check_same_thread=False)
                 self._memory_connection.row_factory = sqlite3.Row
                 self._configure_connection(self._memory_connection)
             return self._memory_connection
@@ -72,6 +72,9 @@ class Repository:
                     run_dir TEXT NOT NULL,
                     summary_path TEXT,
                     status TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'trained',
+                    note TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (experiment_id) REFERENCES experiments (experiment_id)
                 );
@@ -94,6 +97,16 @@ class Repository:
                 conn.execute("ALTER TABLE experiments ADD COLUMN description TEXT NOT NULL DEFAULT ''")
             if "session_key" not in columns:
                 conn.execute("ALTER TABLE experiments ADD COLUMN session_key TEXT NOT NULL DEFAULT ''")
+            trial_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(trials)").fetchall()
+            }
+            if "source" not in trial_columns:
+                conn.execute("ALTER TABLE trials ADD COLUMN source TEXT NOT NULL DEFAULT 'trained'")
+            if "note" not in trial_columns:
+                conn.execute("ALTER TABLE trials ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+            if "reason" not in trial_columns:
+                conn.execute("ALTER TABLE trials ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
 
     def _next_id(self, prefix: str, table: str, column: str) -> str:
         with self._connect() as conn:
@@ -251,8 +264,8 @@ class Repository:
                 """
                 INSERT INTO trials (
                     trial_id, experiment_id, iteration, params_json, metrics_json, run_dir,
-                    summary_path, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    summary_path, status, source, note, reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trial.trial_id,
@@ -263,6 +276,9 @@ class Repository:
                     trial.run_dir,
                     trial.summary_path,
                     trial.status,
+                    trial.source,
+                    trial.note,
+                    trial.reason,
                     utc_now_iso(),
                 ),
             )
@@ -312,6 +328,9 @@ class Repository:
             run_dir=row["run_dir"],
             summary_path=row["summary_path"],
             metrics=json.loads(row["metrics_json"]),
+            source=row["source"],
+            note=row["note"],
+            reason=row["reason"],
         )
 
     def list_trials(self, experiment_id: str) -> list[TrialRecord]:
@@ -330,6 +349,9 @@ class Repository:
                 run_dir=row["run_dir"],
                 summary_path=row["summary_path"],
                 metrics=json.loads(row["metrics_json"]),
+                source=row["source"],
+                note=row["note"],
+                reason=row["reason"],
             )
             for row in rows
         ]
