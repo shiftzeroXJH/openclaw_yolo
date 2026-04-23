@@ -98,6 +98,38 @@ Get experiment detail:
 GET /api/experiments/{experiment_id}
 ```
 
+Delete an experiment:
+
+```http
+DELETE /api/experiments/{experiment_id}?keep_files=true&force=false
+```
+
+Query parameters:
+
+- `keep_files=true`: delete database records only, keep training files.
+- `keep_files=false`: delete database records and the experiment directory under `save_root/experiments/{experiment_id}`.
+- `force=false`: only delete finalized experiments.
+- `force=true`: delete even if the experiment is not finalized.
+
+Finalized statuses are `COMPLETED`, `CANCELLED`, and `FAILED`.
+
+Delete a single trial record:
+
+```http
+DELETE /api/trials/{trial_id}?keep_files=true&force=false
+```
+
+This removes one training/import record from its experiment. The experiment remains.
+
+Query parameters:
+
+- `keep_files=true`: delete database record and trial events only.
+- `keep_files=false`: also delete files managed under `save_root/experiments/{experiment_id}/{trial_id}`.
+- `force=false`: refuse to delete trials currently in `TRAINING`, `RETRAINING`, or `ANALYZING`.
+- `force=true`: allow deleting an active trial record.
+
+For imported external YOLO runs, `keep_files=false` does not delete the external `run_dir`; it only deletes files managed inside this project's experiment directory.
+
 Get editable parameter metadata:
 
 ```http
@@ -230,6 +262,7 @@ The original bridge endpoints remain available:
 - `GET /tasks`
 - `POST /tasks`
 - `GET /tasks/{experiment_id}`
+- `DELETE /tasks/{experiment_id}`
 - `POST /tasks/{experiment_id}/run`
 - `POST /tasks/{experiment_id}/continue`
 - `GET /trials/{trial_id}/summary`

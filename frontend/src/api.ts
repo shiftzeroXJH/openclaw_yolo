@@ -97,5 +97,21 @@ export const api = {
     const res = await fetch(`/api/trials/${trialId}/summary`);
     if (!res.ok) throw await res.json();
     return res.json();
+  },
+
+  async deleteExperiment(experimentId: string, keepFiles: boolean = true, force: boolean = false) {
+    const res = await fetch(`/api/experiments/${experimentId}?keep_files=${keepFiles}&force=${force}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async deleteTrial(trialId: string, keepFiles: boolean = true, force: boolean = false) {
+    const res = await fetch(`/api/trials/${trialId}?keep_files=${keepFiles}&force=${force}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
   }
 };

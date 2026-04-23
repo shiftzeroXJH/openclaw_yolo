@@ -361,6 +361,11 @@ class Repository:
             cursor = conn.execute("DELETE FROM trials WHERE experiment_id = ?", (experiment_id,))
         return int(cursor.rowcount or 0)
 
+    def delete_trial(self, trial_id: str) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM trials WHERE trial_id = ?", (trial_id,))
+        return int(cursor.rowcount or 0)
+
     def add_event(
         self,
         experiment_id: str,
@@ -380,6 +385,11 @@ class Repository:
     def delete_events_for_experiment(self, experiment_id: str) -> int:
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM events WHERE experiment_id = ?", (experiment_id,))
+        return int(cursor.rowcount or 0)
+
+    def delete_events_for_trial(self, trial_id: str) -> int:
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM events WHERE trial_id = ?", (trial_id,))
         return int(cursor.rowcount or 0)
 
     def latest_event(self, experiment_id: str, event_type: str) -> dict[str, Any] | None:

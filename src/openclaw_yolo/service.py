@@ -580,6 +580,68 @@ class OrchestratorService:
             "warnings": warnings,
         }
 
+    def delete_trial(
+        self,
+        trial_id: str,
+        *,
+        keep_files: bool = False,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        trial = self.repo.get_trial(trial_id)
+        config = self.repo.get_experiment(trial.experiment_id)
+        protected_states = {STATE_TRAINING, STATE_RETRAINING, STATE_ANALYZING}
+        if not force and trial.status in protected_states:
+            raise ServiceError(
+                f"trial {trial_id} is in status {trial.status}; wait until it finishes or use --force"
+            )
+
+        warnings: list[str] = []
+        deleted_paths: list[str] = []
+        experiment_dir = (Path(config.save_root).resolve() / "experiments" / trial.experiment_id).resolve()
+
+        if not keep_files:
+            candidate_dirs: list[Path] = []
+            run_dir = Path(trial.run_dir).resolve()
+            if experiment_dir in run_dir.parents or run_dir == experiment_dir:
+                candidate_dirs.append(run_dir)
+            if trial.summary_path:
+                summary_dir = Path(trial.summary_path).resolve().parent
+                if summary_dir not in candidate_dirs and experiment_dir in summary_dir.parents:
+                    candidate_dirs.append(summary_dir)
+
+            for candidate in candidate_dirs:
+                if experiment_dir not in candidate.parents:
+                    warnings.append(f"skipped path outside experiment directory: {candidate}")
+                    continue
+                if candidate.exists():
+                    try:
+                        shutil.rmtree(candidate, onerror=_handle_rmtree_error)
+                        deleted_paths.append(str(candidate))
+                    except Exception as exc:
+                        warnings.append(f"failed to delete files for {candidate}: {exc}")
+
+        deleted_events = self.repo.delete_events_for_trial(trial_id)
+        deleted_trials = self.repo.delete_trial(trial_id)
+        remaining_trials = self.repo.list_trials(trial.experiment_id)
+        if remaining_trials:
+            self.repo.update_experiment_status(trial.experiment_id, remaining_trials[-1].status)
+        else:
+            self.repo.update_experiment_status(trial.experiment_id, STATE_READY)
+
+        return {
+            "experiment_id": trial.experiment_id,
+            "trial_id": trial_id,
+            "deleted": deleted_trials == 1,
+            "deleted_trials": deleted_trials,
+            "deleted_events": deleted_events,
+            "files_deleted": bool(deleted_paths),
+            "deleted_paths": deleted_paths,
+            "kept_files": keep_files,
+            "previous_status": trial.status,
+            "remaining_trial_count": len(remaining_trials),
+            "warnings": warnings,
+        }
+
     def run_trial(
         self,
         experiment_id: str,
@@ -591,7 +653,7 @@ class OrchestratorService:
         config = self.repo.get_experiment(experiment_id)
         trials = self.repo.list_trials(experiment_id)
         trial_id = self.repo.next_trial_id()
-        iteration = len(trials) + 1
+        iteration = self._next_iteration(trials)
         validation = self.validate_params(experiment_id, params=params or config.initial_params)
         if not validation["valid"]:
             raise ServiceError(f"invalid trial params: {validation['errors']}")
@@ -776,7 +838,7 @@ class OrchestratorService:
 
         trials = self.repo.list_trials(experiment_id)
         trial_id = self.repo.next_trial_id()
-        iteration = len(trials) + 1
+        iteration = self._next_iteration(trials)
         trial_dir = ensure_dir(Path(config.save_root) / "experiments" / experiment_id / trial_id)
         previous_summary = None
         summaries = self.repo.recent_summaries(experiment_id, limit=1)
@@ -882,6 +944,11 @@ class OrchestratorService:
             if trial.params:
                 return dict(trial.params)
         return dict(config.initial_params)
+
+    def _next_iteration(self, trials: list[TrialRecord]) -> int:
+        if not trials:
+            return 1
+        return max(trial.iteration for trial in trials) + 1
 
     def _editable_schema(self, search_space: dict[str, Any]) -> dict[str, Any]:
         schema: dict[str, Any] = {}

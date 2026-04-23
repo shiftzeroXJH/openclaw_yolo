@@ -201,6 +201,127 @@ Response shape:
 }
 ```
 
+### 3.1 Delete Experiment
+
+Use the generic API:
+
+```http
+DELETE /api/experiments/{experiment_id}?keep_files=true&force=false
+```
+
+This deletes the experiment record, its trials, and related events from SQLite. File deletion depends on `keep_files`.
+
+Query parameters:
+
+- `keep_files=true`: keep the training files and only remove the experiment from the manager.
+- `keep_files=false`: also delete `save_root/experiments/{experiment_id}`.
+- `force=false`: only allow deletion when status is finalized.
+- `force=true`: allow deletion even when status is active or waiting.
+
+Finalized statuses:
+
+- `COMPLETED`
+- `CANCELLED`
+- `FAILED`
+
+Recommended frontend behavior:
+
+- Put delete in an experiment settings menu, not as a primary action.
+- Default to `keep_files=true`.
+- Label the default action as "Remove from manager".
+- Add a separate danger checkbox for "Also delete training files".
+- If status is not `COMPLETED`, `CANCELLED`, or `FAILED`, require a second confirmation and call with `force=true`.
+
+Example calls:
+
+```http
+DELETE /api/experiments/exp_008?keep_files=true&force=false
+```
+
+```http
+DELETE /api/experiments/exp_008?keep_files=false&force=true
+```
+
+Success response:
+
+```json
+{
+  "experiment_id": "exp_008",
+  "deleted": true,
+  "deleted_trials": 1,
+  "deleted_events": 4,
+  "files_deleted": false,
+  "kept_files": true,
+  "previous_status": "WAITING_USER_CONFIRM",
+  "trial_ids": ["trial_007"],
+  "warnings": []
+}
+```
+
+After success:
+
+- Clear selected experiment if it was deleted.
+- Refresh `GET /api/experiments`.
+- Show `warnings` if non-empty.
+
+### 3.2 Delete Single Trial
+
+Use this when the user wants to remove one training attempt from an experiment while keeping the experiment/task itself.
+
+```http
+DELETE /api/trials/{trial_id}?keep_files=true&force=false
+```
+
+This deletes one trial record and its trial events. The parent experiment remains.
+
+Query parameters:
+
+- `keep_files=true`: remove the trial from the manager only.
+- `keep_files=false`: also delete files managed under `save_root/experiments/{experiment_id}/{trial_id}`.
+- `force=false`: refuse to delete active trials in `TRAINING`, `RETRAINING`, or `ANALYZING`.
+- `force=true`: allow deleting an active trial record.
+
+Important safety behavior:
+
+- If a trial was imported from an external YOLO `run_dir`, `keep_files=false` does not delete that external run directory.
+- Only files inside this project's managed experiment directory are eligible for deletion.
+
+Example calls:
+
+```http
+DELETE /api/trials/trial_007?keep_files=true&force=false
+```
+
+```http
+DELETE /api/trials/trial_007?keep_files=false&force=true
+```
+
+Success response:
+
+```json
+{
+  "experiment_id": "exp_008",
+  "trial_id": "trial_007",
+  "deleted": true,
+  "deleted_trials": 1,
+  "deleted_events": 3,
+  "files_deleted": false,
+  "deleted_paths": [],
+  "kept_files": true,
+  "previous_status": "WAITING_USER_CONFIRM",
+  "remaining_trial_count": 2,
+  "warnings": []
+}
+```
+
+Recommended frontend behavior:
+
+- Put this action in each trial row's overflow menu.
+- Label default action as "Remove trial from manager".
+- Default to `keep_files=true`.
+- Add a separate danger checkbox for "Also delete managed trial files".
+- After success, refresh experiment detail, comparison, params, and experiment list.
+
 ### 4. Trial Comparison Table
 
 Load:
@@ -530,7 +651,19 @@ Show:
 
 ## Status Values
 
-Known statuses:
+There are two status fields in the backend:
+
+- `experiment.status`: status of the whole task/experiment.
+- `trial.status`: status of one training attempt inside the experiment.
+
+Use different frontend labels in context:
+
+- For `experiment.status`, show it as "Task Status" or "Experiment Status".
+- For `trial.status`, show it as "Training Status" or "Trial Status".
+
+Both fields currently reuse the same status strings.
+
+Known current statuses:
 
 - `READY`
 - `TRAINING`
@@ -541,13 +674,109 @@ Known statuses:
 - `FAILED`
 - `CANCELLED`
 
-Suggested UI mapping:
+Legacy records may also contain:
 
-- `READY`: neutral
-- `TRAINING`, `RETRAINING`, `ANALYZING`: active / spinner
-- `WAITING_USER_CONFIRM`: warning or attention
-- `COMPLETED`: success
-- `FAILED`, `CANCELLED`: danger or muted
+- `AUTO_TUNE_PENDING`
+
+Treat `AUTO_TUNE_PENDING` like `WAITING_USER_CONFIRM` in the frontend.
+
+### Experiment Status Meaning
+
+| Status | Meaning | Suggested label |
+|---|---|---|
+| `READY` | Experiment was created and has not started training yet, or all trials were deleted. | 待开始 |
+| `TRAINING` | First trial is currently running. | 训练中 |
+| `RETRAINING` | A later trial is currently running. | 再训练中 |
+| `ANALYZING` | Training finished and the backend is generating/parsing summary data. | 分析中 |
+| `WAITING_USER_CONFIRM` | Latest trial finished, target is not reached yet, and the user should decide whether to tune params and run again. | 等待决策 |
+| `COMPLETED` | Experiment is finished. It may have reached the target or hit the max-trials stop condition. | 已完成 |
+| `FAILED` | Experiment failed due to training/environment/data/model errors. | 失败 |
+| `CANCELLED` | User cancelled the experiment. | 已取消 |
+| `AUTO_TUNE_PENDING` | Legacy status from older records; treat as waiting for tuning/next decision. | 等待调参 |
+
+### Trial Status Meaning
+
+| Status | Meaning | Suggested label |
+|---|---|---|
+| `TRAINING` | This trial is actively training. Usually the first run. | 训练中 |
+| `RETRAINING` | This trial is actively training as a later run. | 再训练中 |
+| `ANALYZING` | Trial output is being analyzed. This is usually transient. | 分析中 |
+| `WAITING_USER_CONFIRM` | This trial completed, but the experiment has not reached the target yet. | 已完成，待决策 |
+| `COMPLETED` | This trial completed and the experiment is finished. | 已完成 |
+| `FAILED` | This trial failed. | 失败 |
+| `CANCELLED` | This trial was cancelled. Current cancel behavior is mostly experiment-level. | 已取消 |
+| `READY` | Usually not expected on a trial; handle as fallback. | 待开始 |
+| `AUTO_TUNE_PENDING` | Legacy status; treat as waiting for tuning. | 等待调参 |
+
+### Status Flow
+
+Typical experiment flow:
+
+```text
+create experiment
+  -> experiment.status = READY
+
+first trial starts
+  -> experiment.status = TRAINING
+  -> trial.status = TRAINING
+
+later trial starts
+  -> experiment.status = RETRAINING
+  -> trial.status = RETRAINING
+
+training finished, summary being built
+  -> experiment.status = ANALYZING
+
+summary done, target reached or max trials reached
+  -> experiment.status = COMPLETED
+  -> trial.status = COMPLETED
+
+summary done, target not reached and can continue
+  -> experiment.status = WAITING_USER_CONFIRM
+  -> trial.status = WAITING_USER_CONFIRM
+
+training error
+  -> experiment.status = FAILED
+  -> trial.status = FAILED
+
+user cancels task
+  -> experiment.status = CANCELLED
+```
+
+### Suggested UI Mapping
+
+Use a shared mapping for visual tone:
+
+```ts
+const STATUS_LABELS: Record<string, string> = {
+  READY: "待开始",
+  TRAINING: "训练中",
+  RETRAINING: "再训练中",
+  ANALYZING: "分析中",
+  WAITING_USER_CONFIRM: "等待决策",
+  COMPLETED: "已完成",
+  FAILED: "失败",
+  CANCELLED: "已取消",
+  AUTO_TUNE_PENDING: "等待调参",
+};
+
+const STATUS_TONE: Record<
+  string,
+  "neutral" | "active" | "warning" | "success" | "danger" | "muted"
+> = {
+  READY: "neutral",
+  TRAINING: "active",
+  RETRAINING: "active",
+  ANALYZING: "active",
+  WAITING_USER_CONFIRM: "warning",
+  COMPLETED: "success",
+  FAILED: "danger",
+  CANCELLED: "muted",
+  AUTO_TUNE_PENDING: "warning",
+};
+```
+
+For trial rows, override the label for `WAITING_USER_CONFIRM` to `已完成，待决策` if that reads better in the table.
 
 ## Parameter Fields
 

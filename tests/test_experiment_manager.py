@@ -127,7 +127,9 @@ def test_api_experiment_flow(tmp_path: Path) -> None:
     dataset_root = tmp_path / "dataset"
     _write_dataset(dataset_root)
     run_dir = tmp_path / "api-run"
+    second_run_dir = tmp_path / "api-run-2"
     _write_results(run_dir, map50_95=0.47)
+    _write_results(second_run_dir, map50_95=0.58)
 
     create_response = client.post(
         "/api/experiments",
@@ -160,7 +162,39 @@ def test_api_experiment_flow(tmp_path: Path) -> None:
         json={"run_dir": str(run_dir), "note": "api import"},
     )
     assert import_response.status_code == 200
+    first_trial_id = import_response.json()["trial_id"]
+
+    second_import_response = client.post(
+        f"/api/experiments/{experiment_id}/trials/import",
+        json={"run_dir": str(second_run_dir), "note": "api import 2"},
+    )
+    assert second_import_response.status_code == 200
+    second_trial_id = second_import_response.json()["trial_id"]
 
     comparison_response = client.get(f"/api/experiments/{experiment_id}/comparison")
     assert comparison_response.status_code == 200
     assert comparison_response.json()["rows"][0]["note"] == "api import"
+    assert len(comparison_response.json()["rows"]) == 2
+
+    delete_trial_response = client.delete(f"/api/trials/{first_trial_id}?keep_files=true")
+    assert delete_trial_response.status_code == 200
+    assert delete_trial_response.json()["deleted"] is True
+    assert delete_trial_response.json()["remaining_trial_count"] == 1
+
+    comparison_after_trial_delete = client.get(f"/api/experiments/{experiment_id}/comparison")
+    assert comparison_after_trial_delete.status_code == 200
+    rows = comparison_after_trial_delete.json()["rows"]
+    assert len(rows) == 1
+    assert rows[0]["trial_id"] == second_trial_id
+
+    blocked_delete = client.delete(f"/api/experiments/{experiment_id}?keep_files=true")
+    assert blocked_delete.status_code == 400
+
+    delete_response = client.delete(f"/api/experiments/{experiment_id}?keep_files=true&force=true")
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] is True
+    assert delete_response.json()["kept_files"] is True
+
+    list_response = client.get("/api/experiments")
+    assert list_response.status_code == 200
+    assert list_response.json()["experiments"] == []

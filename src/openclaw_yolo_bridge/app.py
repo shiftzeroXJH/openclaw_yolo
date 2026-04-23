@@ -72,6 +72,14 @@ def get_experiment(experiment_id: str) -> dict[str, Any]:
     return _invoke_sync("get-experiment", lambda: service.get_experiment_detail(experiment_id))
 
 
+@app.delete("/api/experiments/{experiment_id}")
+def delete_experiment(experiment_id: str, keep_files: bool = False, force: bool = False) -> dict[str, Any]:
+    return _invoke_sync(
+        "delete-experiment",
+        lambda: service.delete_task(experiment_id, keep_files=keep_files, force=force),
+    )
+
+
 @app.get("/api/experiments/{experiment_id}/comparison")
 def compare_experiment(experiment_id: str) -> dict[str, Any]:
     return _invoke_sync("compare-experiment", lambda: service.compare_experiment(experiment_id))
@@ -127,6 +135,14 @@ def import_experiment_trial(experiment_id: str, payload: dict[str, Any]) -> dict
 @app.get("/api/trials/{trial_id}/summary")
 def get_api_summary(trial_id: str, compact: bool = False) -> dict[str, Any]:
     return _invoke_sync("get-api-summary", lambda: service.get_summary(trial_id, compact=compact))
+
+
+@app.delete("/api/trials/{trial_id}")
+def delete_trial(trial_id: str, keep_files: bool = False, force: bool = False) -> dict[str, Any]:
+    return _invoke_sync(
+        "delete-trial",
+        lambda: service.delete_trial(trial_id, keep_files=keep_files, force=force),
+    )
 
 
 @app.get("/tasks/{experiment_id}")

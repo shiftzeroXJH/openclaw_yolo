@@ -1,11 +1,16 @@
-import { CheckCircle2, CircleDashed, XCircle, Loader2 } from 'lucide-react'
+import { CheckCircle2, CircleDashed, XCircle, Loader2, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { DeleteDialog } from './DeleteDialog'
 
 interface Props {
   data: any
   onRowClick: (trialId: string) => void
+  onDeleteTrial: (trialId: string, keepFiles: boolean) => Promise<void>
 }
 
-export function TrialComparisonTable({ data, onRowClick }: Props) {
+export function TrialComparisonTable({ data, onRowClick, onDeleteTrial }: Props) {
+  const [trialToDelete, setTrialToDelete] = useState<string | null>(null);
+
   if (!data || !data.rows || data.rows.length === 0) {
     return <div className="p-4 text-muted">暂无实验记录，请先运行一次实验。</div>
   }
@@ -50,6 +55,7 @@ export function TrialComparisonTable({ data, onRowClick }: Props) {
           <tr>
             {cols.map(c => <th key={c}>{c.replace(/_/g, ' ')}</th>)}
             <th>备注</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -78,10 +84,33 @@ export function TrialComparisonTable({ data, onRowClick }: Props) {
               <td>{r.params?.batch || r.batch || '-'}</td>
               <td>{formatValue('lr0', r.params?.lr0 || r.lr0)}</td>
               <td style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.note || '-'}</td>
+              <td>
+                <button 
+                  className="btn btn-danger" 
+                  style={{ padding: '0.2rem 0.4rem', backgroundColor: 'transparent', color: 'var(--danger-color)', border: 'none', boxShadow: 'none' }}
+                  onClick={(e) => { e.stopPropagation(); setTrialToDelete(r.trial_id); }}
+                  title="删除该 Trial"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      {trialToDelete && (
+        <DeleteDialog
+          title="删除训练记录"
+          message={`确定要将训练记录 ${trialToDelete} 从面板中移除吗？这不会影响同属一个任务下的其他实验结果。`}
+          dangerousMessage="同时删除本地磁盘上的此模型训练文件"
+          onClose={() => setTrialToDelete(null)}
+          onConfirm={async (keepFiles) => {
+            await onDeleteTrial(trialToDelete, keepFiles);
+            setTrialToDelete(null);
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -54,7 +54,13 @@ function App() {
       {/* Main Workspace */}
       <div className="flex-col" style={{ flex: 1, backgroundColor: 'var(--bg-color)', overflowY: 'auto', position: 'relative' }}>
         {activeExperimentId ? (
-          <Workspace experimentId={activeExperimentId} />
+          <Workspace 
+            experimentId={activeExperimentId} 
+            onDeleted={() => {
+              setActiveExperimentId(null);
+              loadExperiments();
+            }}
+          />
         ) : (
           <div className="flex items-center" style={{ justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
             {loading ? '正在加载工作台...' : '当前无选中实验'}
