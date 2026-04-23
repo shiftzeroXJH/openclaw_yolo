@@ -45,10 +45,10 @@ For tests and API development:
 pip install -e .[dev] --no-build-isolation
 ```
 
-Start the backend:
+Start the backend bridge on Windows:
 
 ```powershell
-python -m openclaw_yolo_bridge.app
+.\start-bridge.bat
 ```
 
 Default URL:
@@ -56,6 +56,29 @@ Default URL:
 ```text
 http://127.0.0.1:8765
 ```
+
+This single bridge serves both the Web UI API (`/api/...`) and the OpenClaw-compatible HTTP client endpoints (`/tasks`, `/trials`, `/jobs`).
+
+Start the frontend Web UI:
+
+```powershell
+.\start-frontend.bat
+```
+
+Frontend URL:
+
+```text
+http://127.0.0.1:5173
+```
+
+Stop services with:
+
+```powershell
+.\stop-frontend.bat
+.\stop-bridge.bat
+```
+
+For direct development without the background scripts, the backend module can still be run with `python -m openclaw_yolo_bridge.app`, and the frontend can be run from `frontend/` with `npm run dev -- --host 127.0.0.1`.
 
 ## Generic Experiment API
 
@@ -205,6 +228,16 @@ POST /api/experiments/{experiment_id}/trials/import
 ```
 
 The run directory must contain `results.csv`. If it also contains `config.json`, those params are used. Otherwise the latest experiment params are used unless `params` is provided.
+
+Register and monitor a remote YOLO run over SFTP:
+
+```http
+POST /api/remote-servers
+POST /api/experiments/{experiment_id}/trials/remote-register
+POST /api/trials/{trial_id}/remote-sync
+```
+
+Remote monitoring does not start training and does not run local validation. The backend briefly reads remote files over SFTP, closes the remote handles, stores local copies under `save_root/remote_cache/{remote_server_id}/{trial_id}`, and parses `results.csv` for curves and metrics. Remote runs must include `args.yaml`; `results.csv` may still be growing while training is in progress. Weight files such as `best.pt` and `last.pt` are not downloaded in this version.
 
 Compare trials:
 

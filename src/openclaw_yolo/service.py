@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import posixpath
 import shlex
 import subprocess
 import shutil
 import stat
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from openclaw_yolo.constants import (
@@ -32,8 +34,8 @@ from openclaw_yolo.core.dataset import inspect_dataset
 from openclaw_yolo.core.param_search import ProposalValidationError, validate_continue_request
 from openclaw_yolo.core.trainer import TrainingError, run_training
 from openclaw_yolo.db.repository import Repository
-from openclaw_yolo.models import ExperimentConfig, GoalConfig, TrialRecord
-from openclaw_yolo.utils import ensure_dir, read_json, write_json
+from openclaw_yolo.models import ExperimentConfig, GoalConfig, RemoteServer, TrialRecord
+from openclaw_yolo.utils import ensure_dir, read_json, utc_now_iso, write_json
 
 
 class ServiceError(RuntimeError):
@@ -43,6 +45,94 @@ class ServiceError(RuntimeError):
 OPENCLAW_SESSIONS_PATH = "~/.openclaw/agents/main/sessions/sessions.json"
 OPENCLAW_NOTIFY_SCRIPT = "/home/shiftzero/bin/openclaw_notify.sh"
 STALE_EMPTY_TASK_TTL_HOURS = 2
+REMOTE_SOURCE = "remote_sftp"
+REMOTE_SYNC_PENDING = "pending"
+REMOTE_SYNC_SYNCED = "synced"
+REMOTE_SYNC_FAILED = "failed"
+REMOTE_TRAINING_RUNNING = "running"
+REMOTE_TRAINING_COMPLETED = "completed"
+REMOTE_TRAINING_MAYBE_STOPPED = "maybe_stopped"
+REMOTE_TRAINING_UNKNOWN = "unknown"
+
+
+def _parse_scalar_yaml_value(raw_value: str) -> Any:
+    value = raw_value.strip()
+    if not value:
+        return ""
+    if (value.startswith("'") and value.endswith("'")) or (value.startswith('"') and value.endswith('"')):
+        return value[1:-1]
+    lowered = value.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+    if lowered in {"null", "none", "~"}:
+        return None
+    try:
+        if any(char in value for char in (".", "e", "E")):
+            return float(value)
+        return int(value)
+    except ValueError:
+        return value
+
+
+def _parse_args_yaml(text: str) -> dict[str, Any]:
+    data: dict[str, Any] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        key = key.strip()
+        if not key or key.startswith("-"):
+            continue
+        data[key] = _parse_scalar_yaml_value(value)
+    return data
+
+
+def _model_basename(model: str) -> str:
+    raw = str(model or "").strip()
+    if not raw:
+        return ""
+    normalized = raw.replace("\\", "/")
+    name = PureWindowsPath(raw).name if "\\" in raw else Path(normalized).name
+    return name or raw
+
+
+def _model_stem(model: str) -> str:
+    basename = _model_basename(model)
+    stem = Path(basename).stem or basename
+    cleaned = []
+    for char in stem.lower():
+        cleaned.append(char if char.isalnum() else "_")
+    value = "".join(cleaned).strip("_")
+    return value or "model"
+
+
+def _params_from_args(args: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: args[key]
+        for key in SEARCH_SPACE
+        if key in args and args[key] is not None
+    }
+
+
+def _valid_epoch_count(results_csv: Path) -> int:
+    if not results_csv.exists():
+        return 0
+    import csv
+
+    count = 0
+    try:
+        with results_csv.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                try:
+                    float(row.get("epoch", ""))
+                except (TypeError, ValueError):
+                    continue
+                count += 1
+    except OSError:
+        return 0
+    return count
 
 
 def _compact_search_space(search_space: dict[str, Any]) -> dict[str, str]:
@@ -237,6 +327,89 @@ class OrchestratorService:
     def inspect_dataset(self, dataset_root: str) -> dict[str, Any]:
         return {"yaml_candidates": inspect_dataset(dataset_root)}
 
+    def list_remote_servers(self) -> dict[str, Any]:
+        return {
+            "remote_servers": [
+                {
+                    "remote_server_id": server.remote_server_id,
+                    "name": server.name,
+                    "host": server.host,
+                    "port": server.port,
+                    "username": server.username,
+                    "auth_type": server.auth_type,
+                    "private_key_path": server.private_key_path,
+                    "password_ref": server.password_ref,
+                    "default_runs_root": server.default_runs_root,
+                }
+                for server in self.repo.list_remote_servers()
+            ]
+        }
+
+    def create_remote_server(
+        self,
+        *,
+        name: str,
+        host: str,
+        port: int = 22,
+        username: str,
+        auth_type: str = "key",
+        private_key_path: str | None = None,
+        password_ref: str | None = None,
+        default_runs_root: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_auth_type = auth_type.strip().lower()
+        if normalized_auth_type not in {"key", "password"}:
+            raise ServiceError("auth_type must be 'key' or 'password'")
+        if normalized_auth_type == "key" and not (private_key_path or "").strip():
+            raise ServiceError("private_key_path is required for key auth")
+        if normalized_auth_type == "password" and not (password_ref or "").strip():
+            raise ServiceError("password_ref is required for password auth")
+
+        existing = self.repo.list_remote_servers()
+        server_id = f"remote_{len(existing) + 1:03d}"
+        existing_ids = {server.remote_server_id for server in existing}
+        index = len(existing) + 1
+        while server_id in existing_ids:
+            index += 1
+            server_id = f"remote_{index:03d}"
+        server = RemoteServer(
+            remote_server_id=server_id,
+            name=name.strip() or server_id,
+            host=host.strip(),
+            port=int(port),
+            username=username.strip(),
+            auth_type=normalized_auth_type,
+            private_key_path=(private_key_path or "").strip(),
+            password_ref=(password_ref or "").strip(),
+            default_runs_root=(default_runs_root or "").strip(),
+        )
+        if not server.host:
+            raise ServiceError("host is required")
+        if not server.username:
+            raise ServiceError("username is required")
+        self.repo.create_remote_server(server)
+        return {"remote_server": server.__dict__}
+
+    def test_remote_server(self, remote_server_id: str) -> dict[str, Any]:
+        server = self.repo.get_remote_server(remote_server_id)
+        client, sftp = self._open_sftp(server)
+        try:
+            root = server.default_runs_root or "."
+            try:
+                sftp.stat(root)
+                root_exists = True
+            except OSError:
+                root_exists = False
+            return {
+                "remote_server_id": remote_server_id,
+                "status": "ok",
+                "default_runs_root": root,
+                "default_runs_root_exists": root_exists,
+            }
+        finally:
+            sftp.close()
+            client.close()
+
     def create_experiment(
         self,
         *,
@@ -396,6 +569,8 @@ class OrchestratorService:
                         "status": latest_trial.status,
                         "metrics": latest_trial.metrics,
                         "source": latest_trial.source,
+                        "model": _model_basename(latest_trial.model or config.pretrained_model),
+                        "remote_training_status": latest_trial.remote_training_status,
                     },
                 }
             )
@@ -408,6 +583,7 @@ class OrchestratorService:
             "experiment": config.to_dict(),
             "trial_count": len(trials),
             "latest_params": self._latest_params(config, trials),
+            "default_model": config.pretrained_model,
             "search_space": config.search_space,
             "trials": [self._trial_row(trial) for trial in trials],
         }
@@ -451,6 +627,7 @@ class OrchestratorService:
                     "params": trial.params,
                     "metrics": trial.metrics,
                     "summary_path": trial.summary_path,
+                    "model": trial.model,
                 }
                 for trial in trials
             ],
@@ -465,6 +642,7 @@ class OrchestratorService:
             "baseline": TASK_BASELINES.get(config.task_type, {}),
             "initial_params": config.initial_params,
             "latest_params": self._latest_params(config, trials),
+            "default_model": config.pretrained_model,
             "editable_schema": self._editable_schema(config.search_space),
             "search_space": config.search_space,
         }
@@ -647,17 +825,20 @@ class OrchestratorService:
         experiment_id: str,
         params: dict[str, Any] | None = None,
         *,
+        pretrained: str | None = None,
         note: str | None = None,
         reason: str | None = None,
     ) -> dict[str, Any]:
         config = self.repo.get_experiment(experiment_id)
         trials = self.repo.list_trials(experiment_id)
-        trial_id = self.repo.next_trial_id()
         iteration = self._next_iteration(trials)
         validation = self.validate_params(experiment_id, params=params or config.initial_params)
         if not validation["valid"]:
             raise ServiceError(f"invalid trial params: {validation['errors']}")
         trial_params = validation["normalized_params"]
+        trial_model = _resolve_pretrained_model(pretrained or config.pretrained_model)
+        _validate_pretrained_model(trial_model)
+        trial_id = self._next_named_trial_id(experiment_id, trial_model, trial_params)
         trial_dir = ensure_dir(Path(config.save_root) / "experiments" / experiment_id / trial_id)
         status = STATE_TRAINING if iteration == 1 else STATE_RETRAINING
         trial = TrialRecord(
@@ -670,6 +851,9 @@ class OrchestratorService:
             source="trained",
             note=(note or "").strip(),
             reason=(reason or "").strip(),
+            model=trial_model,
+            model_source="manual" if pretrained else "experiment_default",
+            params_source="manual",
         )
         write_json(trial_dir / TRIAL_CONFIG_FILENAME, trial_params)
         self.repo.create_trial(trial)
@@ -680,6 +864,7 @@ class OrchestratorService:
             {
                 "trial_id": trial_id,
                 "params": trial_params,
+                "model": trial_model,
                 "note": trial.note,
                 "reason": trial.reason,
             },
@@ -688,7 +873,7 @@ class OrchestratorService:
 
         try:
             training_result = run_training(
-                pretrained_model=config.pretrained_model,
+                pretrained_model=trial_model,
                 dataset_yaml=config.dataset_yaml,
                 run_dir=str(trial_dir),
                 trial_name=trial_id,
@@ -737,8 +922,19 @@ class OrchestratorService:
     def get_summary(self, trial_id: str, compact: bool = False) -> dict[str, Any]:
         trial = self.repo.get_trial(trial_id)
         if not trial.summary_path:
-            raise ServiceError(f"trial has no summary yet: {trial_id}")
-        summary = read_json(trial.summary_path)
+            summary: dict[str, Any] = {
+                "trial_id": trial_id,
+                "final_metrics": {},
+                "metric_breakdown": {},
+                "delta_vs_prev": {},
+                "metric_breakdown_delta_vs_prev": {},
+                "training_dynamics": {},
+                "warnings": ["summary_not_available"],
+                "resource": {},
+                "params": trial.params,
+            }
+        else:
+            summary = read_json(trial.summary_path)
         logs = self._trial_logs(trial.run_dir)
         if compact:
             return {
@@ -748,6 +944,17 @@ class OrchestratorService:
                 "source": trial.source,
                 "note": trial.note,
                 "reason": trial.reason,
+                "model": trial.model,
+                "model_display": _model_basename(trial.model),
+                "model_source": trial.model_source,
+                "params_source": trial.params_source,
+                "remote_server_id": trial.remote_server_id,
+                "remote_run_dir": trial.remote_run_dir,
+                "sync_status": trial.sync_status,
+                "sync_error": trial.sync_error,
+                "remote_training_status": trial.remote_training_status,
+                "last_synced_at": trial.last_synced_at,
+                "last_synced_epoch_count": trial.last_synced_epoch_count,
                 "logs": logs,
                 "metric_context": summary.get("metric_context", {}),
                 "final_metrics": summary.get("final_metrics", {}),
@@ -767,6 +974,17 @@ class OrchestratorService:
             "source": trial.source,
             "note": trial.note,
             "reason": trial.reason,
+            "model": trial.model,
+            "model_display": _model_basename(trial.model),
+            "model_source": trial.model_source,
+            "params_source": trial.params_source,
+            "remote_server_id": trial.remote_server_id,
+            "remote_run_dir": trial.remote_run_dir,
+            "sync_status": trial.sync_status,
+            "sync_error": trial.sync_error,
+            "remote_training_status": trial.remote_training_status,
+            "last_synced_at": trial.last_synced_at,
+            "last_synced_epoch_count": trial.last_synced_epoch_count,
             "logs": logs,
         }
         return summary
@@ -818,6 +1036,7 @@ class OrchestratorService:
         *,
         run_dir: str,
         params: dict[str, Any] | None = None,
+        pretrained: str | None = None,
         note: str | None = None,
     ) -> dict[str, Any]:
         config = self.repo.get_experiment(experiment_id)
@@ -828,17 +1047,41 @@ class OrchestratorService:
             raise ServiceError(f"results.csv not found in run_dir: {run_dir}")
 
         config_path = run_path / TRIAL_CONFIG_FILENAME
+        args_path = run_path / "args.yaml"
+        args_data: dict[str, Any] = {}
+        if args_path.exists():
+            args_data = _parse_args_yaml(args_path.read_text(encoding="utf-8"))
         raw_params = params
-        if raw_params is None and config_path.exists():
+        params_source = "manual" if params is not None else "latest"
+        if raw_params is None and args_data:
+            raw_params = _params_from_args(args_data)
+            params_source = "args_yaml"
+        elif raw_params is None and config_path.exists():
             raw_params = read_json(config_path)
+            params_source = "config_json"
+        if raw_params:
+            base_params = self._latest_params(config, self.repo.list_trials(experiment_id))
+            merged_params = dict(base_params)
+            merged_params.update(raw_params)
+            raw_params = merged_params
+            if params_source == "args_yaml" and set(raw_params) != set(_params_from_args(args_data)):
+                params_source = "args_yaml_partial"
         validation = self.validate_params(experiment_id, params=raw_params or self._latest_params(config, self.repo.list_trials(experiment_id)))
         if not validation["valid"]:
             raise ServiceError(f"invalid imported params: {validation['errors']}")
         trial_params = validation["normalized_params"]
+        model_source = "manual"
+        trial_model = pretrained or ""
+        if not trial_model and args_data.get("model"):
+            trial_model = str(args_data["model"])
+            model_source = "args_yaml"
+        if not trial_model:
+            trial_model = config.pretrained_model
+            model_source = "experiment_default"
 
         trials = self.repo.list_trials(experiment_id)
-        trial_id = self.repo.next_trial_id()
         iteration = self._next_iteration(trials)
+        trial_id = self._next_named_trial_id(experiment_id, trial_model, trial_params)
         trial_dir = ensure_dir(Path(config.save_root) / "experiments" / experiment_id / trial_id)
         previous_summary = None
         summaries = self.repo.recent_summaries(experiment_id, limit=1)
@@ -866,6 +1109,9 @@ class OrchestratorService:
             metrics=summary["final_metrics"],
             source="imported",
             note=(note or "").strip(),
+            model=trial_model,
+            model_source=model_source,
+            params_source=params_source,
         )
         self.repo.create_trial(trial)
         self.repo.update_experiment_status(experiment_id, next_status)
@@ -888,6 +1134,212 @@ class OrchestratorService:
             "final_metrics": summary["final_metrics"],
         }
 
+    def register_remote_trial(
+        self,
+        experiment_id: str,
+        *,
+        remote_server_id: str,
+        remote_run_dir: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        config = self.repo.get_experiment(experiment_id)
+        server = self.repo.get_remote_server(remote_server_id)
+        args_text = self._read_remote_text(server, self._remote_join(remote_run_dir, "args.yaml"))
+        args_data = _parse_args_yaml(args_text)
+        if not args_data:
+            raise ServiceError("args.yaml is empty or unsupported")
+        if not args_data.get("model"):
+            raise ServiceError("args.yaml does not contain model")
+
+        base_params = self._latest_params(config, self.repo.list_trials(experiment_id))
+        parsed_params = _params_from_args(args_data)
+        merged_params = dict(base_params)
+        merged_params.update(parsed_params)
+        validation = self.validate_params(experiment_id, params=merged_params)
+        if not validation["valid"]:
+            raise ServiceError(f"invalid remote args params: {validation['errors']}")
+        trial_params = validation["normalized_params"]
+        params_source = "remote_args_yaml" if set(parsed_params) >= set(SEARCH_SPACE) else "remote_args_yaml_partial"
+        trial_model = str(args_data["model"])
+        trials = self.repo.list_trials(experiment_id)
+        trial_id = self._next_named_trial_id(experiment_id, trial_model, trial_params)
+        iteration = self._next_iteration(trials)
+        cache_dir = ensure_dir(Path(config.save_root) / "experiments" / experiment_id / trial_id)
+        write_json(cache_dir / TRIAL_CONFIG_FILENAME, trial_params)
+        trial = TrialRecord(
+            trial_id=trial_id,
+            experiment_id=experiment_id,
+            iteration=iteration,
+            params=trial_params,
+            status=STATE_TRAINING,
+            run_dir=str(cache_dir),
+            source=REMOTE_SOURCE,
+            note=(note or "").strip(),
+            model=trial_model,
+            model_source="remote_args_yaml",
+            params_source=params_source,
+            remote_server_id=remote_server_id,
+            remote_run_dir=remote_run_dir,
+            sync_status=REMOTE_SYNC_PENDING,
+            remote_training_status=REMOTE_TRAINING_UNKNOWN,
+        )
+        self.repo.create_trial(trial)
+        self.repo.update_experiment_status(experiment_id, STATE_TRAINING)
+        self.repo.add_event(
+            experiment_id,
+            "REMOTE_TRIAL_REGISTERED",
+            {
+                "trial_id": trial_id,
+                "remote_server_id": remote_server_id,
+                "remote_run_dir": remote_run_dir,
+                "model": trial_model,
+                "params_source": params_source,
+            },
+            trial_id,
+        )
+        return {
+            "status": trial.status,
+            "trial_id": trial_id,
+            "remote_server_id": remote_server_id,
+            "remote_run_dir": remote_run_dir,
+            "local_run_dir": str(cache_dir),
+            "model": _model_basename(trial_model),
+            "params": trial_params,
+            "params_source": params_source,
+        }
+
+    def import_remote_run(
+        self,
+        experiment_id: str,
+        *,
+        remote_server_id: str,
+        remote_run_dir: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        registered = self.register_remote_trial(
+            experiment_id,
+            remote_server_id=remote_server_id,
+            remote_run_dir=remote_run_dir,
+            note=note,
+        )
+        try:
+            synced = self.sync_remote_trial(registered["trial_id"])
+            synced["registered"] = registered
+            return synced
+        except ServiceError as exc:
+            return {
+                "status": STATE_TRAINING,
+                "trial_id": registered["trial_id"],
+                "sync_status": REMOTE_SYNC_FAILED,
+                "sync_error": str(exc),
+                "remote_training_status": REMOTE_TRAINING_UNKNOWN,
+                "registered": registered,
+            }
+
+    def sync_remote_trial(self, trial_id: str) -> dict[str, Any]:
+        trial = self.repo.get_trial(trial_id)
+        if trial.source != REMOTE_SOURCE:
+            raise ServiceError(f"trial is not a remote SFTP trial: {trial_id}")
+        config = self.repo.get_experiment(trial.experiment_id)
+        server = self.repo.get_remote_server(trial.remote_server_id)
+        cache_dir = ensure_dir(trial.run_dir)
+        client, sftp = self._open_sftp(server)
+        sync_error = ""
+        try:
+            self._download_remote_file(sftp, self._remote_join(trial.remote_run_dir, "args.yaml"), cache_dir / "args.yaml")
+            remote_csv = self._remote_join(trial.remote_run_dir, "results.csv")
+            csv_stat = sftp.stat(remote_csv)
+            self._download_remote_file(sftp, remote_csv, cache_dir / "results.csv")
+            self._download_top_level_pngs(sftp, trial.remote_run_dir, cache_dir)
+        except OSError as exc:
+            sync_error = str(exc)
+            self.repo.update_trial(
+                trial_id,
+                sync_status=REMOTE_SYNC_FAILED,
+                sync_error=sync_error,
+                last_synced_at=utc_now_iso(),
+            )
+            raise ServiceError(f"remote sync failed: {sync_error}") from exc
+        finally:
+            sftp.close()
+            client.close()
+
+        args_data = _parse_args_yaml((cache_dir / "args.yaml").read_text(encoding="utf-8"))
+        epoch_count = _valid_epoch_count(cache_dir / "results.csv")
+        remote_size = int(getattr(csv_stat, "st_size", 0) or 0)
+        remote_mtime = float(getattr(csv_stat, "st_mtime", 0) or 0)
+        unchanged = (
+            trial.last_remote_csv_size == remote_size
+            and trial.last_remote_csv_mtime == remote_mtime
+        )
+        unchanged_count = trial.unchanged_sync_count + 1 if unchanged else 0
+        remote_training_status = self._remote_training_status(args_data, epoch_count, unchanged_count, remote_size)
+        summary_path = str(cache_dir / SUMMARY_FILENAME)
+        final_metrics: dict[str, Any] = {}
+        next_status = STATE_TRAINING
+        if epoch_count > 0:
+            try:
+                previous_summary = self._previous_summary_for_trial(trial.experiment_id, trial.trial_id)
+                summary = build_summary(
+                    trial.trial_id,
+                    config.task_type,
+                    str(cache_dir),
+                    trial.params,
+                    previous_summary,
+                ).to_dict()
+                summary["remote"] = self._remote_trial_payload(trial, server)
+                write_json(summary_path, summary)
+                final_metrics = summary["final_metrics"]
+                next_status = (
+                    self._completion_status(config, summary, trial.iteration)
+                    if remote_training_status == REMOTE_TRAINING_COMPLETED
+                    else STATE_TRAINING
+                    if remote_training_status == REMOTE_TRAINING_RUNNING
+                    else STATE_WAITING
+                )
+            except Exception as exc:
+                sync_error = f"summary parse failed: {exc}"
+                next_status = STATE_TRAINING
+        else:
+            sync_error = "results.csv has no valid epoch rows"
+
+        self.repo.update_trial(
+            trial_id,
+            status=next_status,
+            metrics=final_metrics if final_metrics else None,
+            summary_path=summary_path if final_metrics else None,
+            sync_status=REMOTE_SYNC_SYNCED if not sync_error else REMOTE_SYNC_FAILED,
+            sync_error=sync_error,
+            remote_training_status=remote_training_status,
+            last_remote_csv_size=remote_size,
+            last_remote_csv_mtime=remote_mtime,
+            last_synced_epoch_count=epoch_count,
+            unchanged_sync_count=unchanged_count,
+            last_synced_at=utc_now_iso(),
+        )
+        self.repo.update_experiment_status(trial.experiment_id, next_status)
+        self.repo.add_event(
+            trial.experiment_id,
+            "REMOTE_TRIAL_SYNCED",
+            {
+                "trial_id": trial_id,
+                "remote_training_status": remote_training_status,
+                "epoch_count": epoch_count,
+                "sync_error": sync_error,
+            },
+            trial_id,
+        )
+        return {
+            "status": next_status,
+            "trial_id": trial_id,
+            "sync_status": REMOTE_SYNC_SYNCED if not sync_error else REMOTE_SYNC_FAILED,
+            "sync_error": sync_error,
+            "remote_training_status": remote_training_status,
+            "epoch_count": epoch_count,
+            "final_metrics": final_metrics,
+            "summary_path": summary_path if final_metrics else None,
+        }
+
     def compare_experiment(self, experiment_id: str) -> dict[str, Any]:
         config = self.repo.get_experiment(experiment_id)
         rows = [self._trial_row(trial) for trial in self.repo.list_trials(experiment_id)]
@@ -906,7 +1358,9 @@ class OrchestratorService:
             {"key": "iteration", "label": "Iteration"},
             {"key": "trial_id", "label": "Trial"},
             {"key": "status", "label": "Status"},
+            {"key": "model_display", "label": "Model"},
             {"key": "source", "label": "Source"},
+            {"key": "server", "label": "Location"},
             {"key": "map50_95", "label": "mAP50-95"},
             {"key": "map50", "label": "mAP50"},
             {"key": "precision", "label": "Precision"},
@@ -950,6 +1404,155 @@ class OrchestratorService:
             return 1
         return max(trial.iteration for trial in trials) + 1
 
+    def _next_named_trial_id(
+        self,
+        experiment_id: str,
+        model: str,
+        params: dict[str, Any],
+    ) -> str:
+        model_stem = _model_stem(model)
+        imgsz = int(params.get("imgsz") or 0)
+        prefix = f"{model_stem}_{imgsz}"
+        trials = self.repo.list_trials(experiment_id)
+        max_index = 0
+        for trial in trials:
+            if not trial.trial_id.startswith(f"{prefix}_"):
+                continue
+            try:
+                max_index = max(max_index, int(trial.trial_id.rsplit("_", 1)[1]))
+            except (ValueError, IndexError):
+                continue
+        index = max_index + 1
+        while True:
+            candidate = f"{prefix}_{index}"
+            if not self.repo.trial_id_exists(candidate):
+                return candidate
+            index += 1
+
+    def _previous_summary_for_trial(
+        self,
+        experiment_id: str,
+        trial_id: str,
+    ) -> dict[str, Any] | None:
+        summaries: list[dict[str, Any]] = []
+        for trial in self.repo.list_trials(experiment_id):
+            if trial.trial_id == trial_id:
+                break
+            if trial.summary_path and Path(trial.summary_path).exists():
+                summaries.append(read_json(trial.summary_path))
+        return summaries[-1] if summaries else None
+
+    def _remote_join(self, remote_dir: str, filename: str) -> str:
+        return posixpath.join(remote_dir.rstrip("/"), filename)
+
+    def _open_sftp(self, server: RemoteServer) -> tuple[Any, Any]:
+        try:
+            import paramiko
+        except ImportError as exc:
+            raise ServiceError("paramiko is required for remote SFTP support") from exc
+
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        kwargs: dict[str, Any] = {
+            "hostname": server.host,
+            "port": int(server.port),
+            "username": server.username,
+            "timeout": 15,
+        }
+        if server.auth_type == "key":
+            kwargs["key_filename"] = str(Path(server.private_key_path).expanduser())
+        else:
+            password = os.environ.get(server.password_ref)
+            if password is None:
+                raise ServiceError(f"password env var not found: {server.password_ref}")
+            kwargs["password"] = password
+        try:
+            client.connect(**kwargs)
+            return client, client.open_sftp()
+        except Exception as exc:
+            client.close()
+            raise ServiceError(f"failed to connect remote server {server.remote_server_id}: {exc}") from exc
+
+    def _read_remote_text(self, server: RemoteServer, remote_path: str) -> str:
+        client, sftp = self._open_sftp(server)
+        try:
+            with sftp.open(remote_path, "r") as handle:
+                data = handle.read()
+            if isinstance(data, bytes):
+                return data.decode("utf-8")
+            return str(data)
+        except OSError as exc:
+            raise ServiceError(f"failed to read remote file {remote_path}: {exc}") from exc
+        finally:
+            sftp.close()
+            client.close()
+
+    def _download_remote_file(self, sftp: Any, remote_path: str, local_path: Path) -> None:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = local_path.with_name(f".{local_path.name}.{os.getpid()}.tmp")
+        try:
+            sftp.get(remote_path, str(temp_path))
+            try:
+                os.replace(temp_path, local_path)
+            except PermissionError:
+                if local_path.exists():
+                    local_path.unlink()
+                temp_path.rename(local_path)
+        finally:
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+
+    def _download_top_level_pngs(self, sftp: Any, remote_dir: str, cache_dir: Path) -> None:
+        try:
+            entries = sftp.listdir_attr(remote_dir)
+        except OSError:
+            return
+        for entry in entries:
+            name = getattr(entry, "filename", "")
+            if not name.lower().endswith(".png"):
+                continue
+            try:
+                self._download_remote_file(
+                    sftp,
+                    self._remote_join(remote_dir, name),
+                    cache_dir / name,
+                )
+            except OSError:
+                continue
+
+    def _remote_training_status(
+        self,
+        args_data: dict[str, Any],
+        epoch_count: int,
+        unchanged_count: int,
+        remote_size: int,
+    ) -> str:
+        try:
+            planned_epochs = int(args_data.get("epochs"))
+        except (TypeError, ValueError):
+            planned_epochs = 0
+        if planned_epochs > 0 and epoch_count >= planned_epochs:
+            return REMOTE_TRAINING_COMPLETED
+        if epoch_count <= 0 or remote_size <= 0:
+            return REMOTE_TRAINING_UNKNOWN
+        if unchanged_count >= 2:
+            return REMOTE_TRAINING_MAYBE_STOPPED
+        return REMOTE_TRAINING_RUNNING
+
+    def _remote_trial_payload(self, trial: TrialRecord, server: RemoteServer) -> dict[str, Any]:
+        return {
+            "remote_server_id": trial.remote_server_id,
+            "remote_server_name": server.name,
+            "remote_run_dir": trial.remote_run_dir,
+            "sync_status": trial.sync_status,
+            "sync_error": trial.sync_error,
+            "remote_training_status": trial.remote_training_status,
+            "last_synced_at": trial.last_synced_at,
+        }
+
     def _editable_schema(self, search_space: dict[str, Any]) -> dict[str, Any]:
         schema: dict[str, Any] = {}
         for name, spec in search_space.items():
@@ -975,11 +1578,21 @@ class OrchestratorService:
         basic = summary.get("basic_info", {})
         resource = summary.get("resource", {})
         params = summary.get("params", trial.params)
+        server_name = "local"
+        if trial.remote_server_id:
+            try:
+                server_name = self.repo.get_remote_server(trial.remote_server_id).name
+            except KeyError:
+                server_name = trial.remote_server_id
         return {
             "iteration": trial.iteration,
             "trial_id": trial.trial_id,
             "status": trial.status,
             "source": trial.source,
+            "model": trial.model,
+            "model_display": _model_basename(trial.model),
+            "server": server_name,
+            "remote_server_id": trial.remote_server_id,
             "precision": final_metrics.get("precision"),
             "recall": final_metrics.get("recall"),
             "map50": final_metrics.get("map50"),
@@ -995,6 +1608,8 @@ class OrchestratorService:
             "summary_path": trial.summary_path,
             "note": trial.note,
             "reason": trial.reason,
+            "remote_training_status": trial.remote_training_status,
+            "last_synced_at": trial.last_synced_at,
             "logs": self._trial_logs(trial.run_dir),
             "is_best": False,
         }

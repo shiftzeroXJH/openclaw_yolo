@@ -58,7 +58,15 @@ def _safe_float(value: Any) -> float | None:
 def _load_results_rows(results_csv: Path) -> list[dict[str, Any]]:
     with results_csv.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        return list(reader)
+        rows: list[dict[str, Any]] = []
+        for row in reader:
+            epoch = _safe_float(row.get("epoch"))
+            if epoch is None:
+                continue
+            if all(value in ("", None) for key, value in row.items() if key != "epoch"):
+                continue
+            rows.append(row)
+        return rows
 
 
 def _column_value(row: dict[str, Any], names: tuple[str, ...]) -> float | None:

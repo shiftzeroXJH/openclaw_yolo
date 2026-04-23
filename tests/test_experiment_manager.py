@@ -83,9 +83,9 @@ def test_local_run_allows_many_valid_param_changes(monkeypatch: pytest.MonkeyPat
     )
     result = service.run_trial(experiment_id, params=params, reason="manual sweep")
 
-    assert result["trial_id"] == "trial_001"
+    assert result["trial_id"] == "missing_ok_320_1"
     assert result["final_metrics"]["map50_95"] == 0.44
-    assert service.repo.get_trial("trial_001").reason == "manual sweep"
+    assert service.repo.get_trial("missing_ok_320_1").reason == "manual sweep"
 
 
 def test_openclaw_continue_keeps_three_param_limit(tmp_path: Path) -> None:
@@ -115,10 +115,170 @@ def test_import_run_generates_comparison_row(tmp_path: Path) -> None:
     service.import_run(experiment_id, run_dir=str(second), note="better score")
     comparison = service.compare_experiment(experiment_id)
 
-    assert comparison["best_trial"]["trial_id"] == "trial_002"
+    assert comparison["best_trial"]["trial_id"] == "missing_ok_224_2"
     assert comparison["rows"][1]["is_best"] is True
     assert comparison["rows"][1]["delta_map50_95"] == 0.21
     assert comparison["rows"][1]["source"] == "imported"
+    assert comparison["rows"][1]["model_display"] == "missing-ok.pt"
+
+
+def test_remote_trial_register_and_sync_running_csv(tmp_path: Path) -> None:
+    service = OrchestratorService(db_path=":memory:")
+    experiment_id = _create_experiment(service, tmp_path)
+    server_id = service.create_remote_server(
+        name="gpu-a",
+        host="fake-host",
+        username="trainer",
+        auth_type="key",
+        private_key_path="~/.ssh/id_rsa",
+    )["remote_server"]["remote_server_id"]
+    args_yaml = "\n".join(
+        [
+            r"model: D:\project\openclaw_yolo\src\openclaw_yolo\models\yolo26n.pt",
+            "imgsz: 224",
+            "batch: 8",
+            "epochs: 3",
+            "workers: 0",
+            "lr0: 0.01",
+            "weight_decay: 0.0005",
+            "mosaic: 0.5",
+            "mixup: 0.0",
+            "degrees: 0.0",
+            "translate: 0.1",
+            "scale: 0.5",
+            "fliplr: 0.5",
+            "hsv_h: 0.015",
+            "hsv_s: 0.7",
+            "hsv_v: 0.4",
+        ]
+    )
+    results_csv = "\n".join(
+        [
+            "epoch,time,metrics/precision(B),metrics/recall(B),metrics/mAP50(B),metrics/mAP50-95(B),train/box_loss,val/box_loss,gpu_mem",
+            "1,1.5,0.50,0.40,0.55,0.31,1.2,1.4,2048",
+            "2,1.4,0.60,0.50,0.65,0.42,0.9,1.1,2048",
+        ]
+    )
+    files = {
+        "/runs/train/args.yaml": args_yaml,
+        "/runs/train/results.csv": results_csv,
+    }
+
+    class FakeAttr:
+        def __init__(self, filename: str = "", size: int = 0, mtime: float = 0.0) -> None:
+            self.filename = filename
+            self.st_size = size
+            self.st_mtime = mtime
+
+    class FakeHandle:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def read(self) -> bytes:
+            return self.text.encode("utf-8")
+
+        def __enter__(self) -> "FakeHandle":
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+    class FakeSftp:
+        def open(self, path: str, _mode: str) -> FakeHandle:
+            return FakeHandle(files[path])
+
+        def stat(self, path: str) -> FakeAttr:
+            return FakeAttr(size=len(files[path]), mtime=1.0)
+
+        def get(self, remote: str, local: str) -> None:
+            Path(local).write_text(files[remote], encoding="utf-8")
+
+        def listdir_attr(self, _remote_dir: str) -> list[FakeAttr]:
+            return []
+
+        def close(self) -> None:
+            return None
+
+    class FakeClient:
+        def close(self) -> None:
+            return None
+
+    service._open_sftp = lambda _server: (FakeClient(), FakeSftp())  # type: ignore[method-assign]
+    registered = service.register_remote_trial(
+        experiment_id,
+        remote_server_id=server_id,
+        remote_run_dir="/runs/train",
+    )
+    synced = service.sync_remote_trial(registered["trial_id"])
+
+    assert registered["trial_id"] == "yolo26n_224_1"
+    assert Path(registered["local_run_dir"]).parent.name == experiment_id
+    assert synced["remote_training_status"] == "running"
+    assert synced["epoch_count"] == 2
+    assert synced["final_metrics"]["map50_95"] == 0.42
+
+
+def test_import_remote_run_returns_registered_trial_on_sync_failure(tmp_path: Path) -> None:
+    service = OrchestratorService(db_path=":memory:")
+    experiment_id = _create_experiment(service, tmp_path)
+    server_id = service.create_remote_server(
+        name="gpu-a",
+        host="fake-host",
+        username="trainer",
+        auth_type="key",
+        private_key_path="~/.ssh/id_rsa",
+    )["remote_server"]["remote_server_id"]
+    args_yaml = "\n".join(
+        [
+            "model: yolo26n.pt",
+            "imgsz: 224",
+            "batch: 8",
+            "epochs: 3",
+            "workers: 0",
+        ]
+    )
+    files = {"/runs/train/args.yaml": args_yaml}
+
+    class FakeHandle:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+        def read(self) -> bytes:
+            return self.text.encode("utf-8")
+
+        def __enter__(self) -> "FakeHandle":
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+    class FakeSftp:
+        def open(self, path: str, _mode: str) -> FakeHandle:
+            return FakeHandle(files[path])
+
+        def stat(self, path: str) -> object:
+            raise OSError(f"missing {path}")
+
+        def get(self, remote: str, local: str) -> None:
+            Path(local).write_text(files[remote], encoding="utf-8")
+
+        def close(self) -> None:
+            return None
+
+    class FakeClient:
+        def close(self) -> None:
+            return None
+
+    service._open_sftp = lambda _server: (FakeClient(), FakeSftp())  # type: ignore[method-assign]
+    result = service.import_remote_run(
+        experiment_id,
+        remote_server_id=server_id,
+        remote_run_dir="/runs/train",
+    )
+
+    assert result["sync_status"] == "failed"
+    assert result["registered"]["trial_id"] == "yolo26n_224_1"
+    assert service.repo.get_trial("yolo26n_224_1").sync_status == "failed"
 
 
 def test_api_experiment_flow(tmp_path: Path) -> None:

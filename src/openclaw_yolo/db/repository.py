@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from openclaw_yolo.models import ExperimentConfig, GoalConfig, TrialRecord
+from openclaw_yolo.models import ExperimentConfig, GoalConfig, RemoteServer, TrialRecord
 from openclaw_yolo.utils import utc_now_iso
 
 
@@ -75,8 +75,34 @@ class Repository:
                     source TEXT NOT NULL DEFAULT 'trained',
                     note TEXT NOT NULL DEFAULT '',
                     reason TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL DEFAULT '',
+                    model_source TEXT NOT NULL DEFAULT 'experiment_default',
+                    params_source TEXT NOT NULL DEFAULT 'manual',
+                    remote_server_id TEXT NOT NULL DEFAULT '',
+                    remote_run_dir TEXT NOT NULL DEFAULT '',
+                    sync_status TEXT NOT NULL DEFAULT '',
+                    sync_error TEXT NOT NULL DEFAULT '',
+                    remote_training_status TEXT NOT NULL DEFAULT '',
+                    last_remote_csv_size INTEGER,
+                    last_remote_csv_mtime REAL,
+                    last_synced_epoch_count INTEGER NOT NULL DEFAULT 0,
+                    unchanged_sync_count INTEGER NOT NULL DEFAULT 0,
+                    last_synced_at TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (experiment_id) REFERENCES experiments (experiment_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS remote_servers (
+                    remote_server_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    port INTEGER NOT NULL,
+                    username TEXT NOT NULL,
+                    auth_type TEXT NOT NULL,
+                    private_key_path TEXT NOT NULL DEFAULT '',
+                    password_ref TEXT NOT NULL DEFAULT '',
+                    default_runs_root TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS events (
@@ -107,6 +133,24 @@ class Repository:
                 conn.execute("ALTER TABLE trials ADD COLUMN note TEXT NOT NULL DEFAULT ''")
             if "reason" not in trial_columns:
                 conn.execute("ALTER TABLE trials ADD COLUMN reason TEXT NOT NULL DEFAULT ''")
+            trial_defaults = {
+                "model": "TEXT NOT NULL DEFAULT ''",
+                "model_source": "TEXT NOT NULL DEFAULT 'experiment_default'",
+                "params_source": "TEXT NOT NULL DEFAULT 'manual'",
+                "remote_server_id": "TEXT NOT NULL DEFAULT ''",
+                "remote_run_dir": "TEXT NOT NULL DEFAULT ''",
+                "sync_status": "TEXT NOT NULL DEFAULT ''",
+                "sync_error": "TEXT NOT NULL DEFAULT ''",
+                "remote_training_status": "TEXT NOT NULL DEFAULT ''",
+                "last_remote_csv_size": "INTEGER",
+                "last_remote_csv_mtime": "REAL",
+                "last_synced_epoch_count": "INTEGER NOT NULL DEFAULT 0",
+                "unchanged_sync_count": "INTEGER NOT NULL DEFAULT 0",
+                "last_synced_at": "TEXT NOT NULL DEFAULT ''",
+            }
+            for column, definition in trial_defaults.items():
+                if column not in trial_columns:
+                    conn.execute(f"ALTER TABLE trials ADD COLUMN {column} {definition}")
 
     def _next_id(self, prefix: str, table: str, column: str) -> str:
         with self._connect() as conn:
@@ -129,6 +173,14 @@ class Repository:
 
     def next_trial_id(self) -> str:
         return self._next_id("trial", "trials", "trial_id")
+
+    def trial_id_exists(self, trial_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM trials WHERE trial_id = ? LIMIT 1",
+                (trial_id,),
+            ).fetchone()
+        return row is not None
 
     def create_experiment(self, config: ExperimentConfig) -> None:
         with self._connect() as conn:
@@ -264,8 +316,11 @@ class Repository:
                 """
                 INSERT INTO trials (
                     trial_id, experiment_id, iteration, params_json, metrics_json, run_dir,
-                    summary_path, status, source, note, reason, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    summary_path, status, source, note, reason, model, model_source,
+                    params_source, remote_server_id, remote_run_dir, sync_status, sync_error,
+                    remote_training_status, last_remote_csv_size, last_remote_csv_mtime,
+                    last_synced_epoch_count, unchanged_sync_count, last_synced_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     trial.trial_id,
@@ -279,6 +334,19 @@ class Repository:
                     trial.source,
                     trial.note,
                     trial.reason,
+                    trial.model,
+                    trial.model_source,
+                    trial.params_source,
+                    trial.remote_server_id,
+                    trial.remote_run_dir,
+                    trial.sync_status,
+                    trial.sync_error,
+                    trial.remote_training_status,
+                    trial.last_remote_csv_size,
+                    trial.last_remote_csv_mtime,
+                    trial.last_synced_epoch_count,
+                    trial.unchanged_sync_count,
+                    trial.last_synced_at,
                     utc_now_iso(),
                 ),
             )
@@ -290,6 +358,18 @@ class Repository:
         status: str | None = None,
         metrics: dict[str, Any] | None = None,
         summary_path: str | None = None,
+        run_dir: str | None = None,
+        model: str | None = None,
+        model_source: str | None = None,
+        params_source: str | None = None,
+        sync_status: str | None = None,
+        sync_error: str | None = None,
+        remote_training_status: str | None = None,
+        last_remote_csv_size: int | None = None,
+        last_remote_csv_mtime: float | None = None,
+        last_synced_epoch_count: int | None = None,
+        unchanged_sync_count: int | None = None,
+        last_synced_at: str | None = None,
     ) -> None:
         assignments: list[str] = []
         values: list[Any] = []
@@ -302,6 +382,24 @@ class Repository:
         if summary_path is not None:
             assignments.append("summary_path = ?")
             values.append(summary_path)
+        optional_values = {
+            "run_dir": run_dir,
+            "model": model,
+            "model_source": model_source,
+            "params_source": params_source,
+            "sync_status": sync_status,
+            "sync_error": sync_error,
+            "remote_training_status": remote_training_status,
+            "last_remote_csv_size": last_remote_csv_size,
+            "last_remote_csv_mtime": last_remote_csv_mtime,
+            "last_synced_epoch_count": last_synced_epoch_count,
+            "unchanged_sync_count": unchanged_sync_count,
+            "last_synced_at": last_synced_at,
+        }
+        for column, value in optional_values.items():
+            if value is not None:
+                assignments.append(f"{column} = ?")
+                values.append(value)
         if not assignments:
             return
         values.append(trial_id)
@@ -331,6 +429,19 @@ class Repository:
             source=row["source"],
             note=row["note"],
             reason=row["reason"],
+            model=row["model"],
+            model_source=row["model_source"],
+            params_source=row["params_source"],
+            remote_server_id=row["remote_server_id"],
+            remote_run_dir=row["remote_run_dir"],
+            sync_status=row["sync_status"],
+            sync_error=row["sync_error"],
+            remote_training_status=row["remote_training_status"],
+            last_remote_csv_size=row["last_remote_csv_size"],
+            last_remote_csv_mtime=row["last_remote_csv_mtime"],
+            last_synced_epoch_count=int(row["last_synced_epoch_count"]),
+            unchanged_sync_count=int(row["unchanged_sync_count"]),
+            last_synced_at=row["last_synced_at"],
         )
 
     def list_trials(self, experiment_id: str) -> list[TrialRecord]:
@@ -352,9 +463,85 @@ class Repository:
                 source=row["source"],
                 note=row["note"],
                 reason=row["reason"],
+                model=row["model"],
+                model_source=row["model_source"],
+                params_source=row["params_source"],
+                remote_server_id=row["remote_server_id"],
+                remote_run_dir=row["remote_run_dir"],
+                sync_status=row["sync_status"],
+                sync_error=row["sync_error"],
+                remote_training_status=row["remote_training_status"],
+                last_remote_csv_size=row["last_remote_csv_size"],
+                last_remote_csv_mtime=row["last_remote_csv_mtime"],
+                last_synced_epoch_count=int(row["last_synced_epoch_count"]),
+                unchanged_sync_count=int(row["unchanged_sync_count"]),
+                last_synced_at=row["last_synced_at"],
             )
             for row in rows
         ]
+
+    def create_remote_server(self, server: RemoteServer) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO remote_servers (
+                    remote_server_id, name, host, port, username, auth_type,
+                    private_key_path, password_ref, default_runs_root, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    server.remote_server_id,
+                    server.name,
+                    server.host,
+                    int(server.port),
+                    server.username,
+                    server.auth_type,
+                    server.private_key_path,
+                    server.password_ref,
+                    server.default_runs_root,
+                    utc_now_iso(),
+                ),
+            )
+
+    def list_remote_servers(self) -> list[RemoteServer]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM remote_servers ORDER BY created_at DESC, remote_server_id DESC"
+            ).fetchall()
+        return [
+            RemoteServer(
+                remote_server_id=row["remote_server_id"],
+                name=row["name"],
+                host=row["host"],
+                port=int(row["port"]),
+                username=row["username"],
+                auth_type=row["auth_type"],
+                private_key_path=row["private_key_path"],
+                password_ref=row["password_ref"],
+                default_runs_root=row["default_runs_root"],
+            )
+            for row in rows
+        ]
+
+    def get_remote_server(self, remote_server_id: str) -> RemoteServer:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM remote_servers WHERE remote_server_id = ?",
+                (remote_server_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"remote server not found: {remote_server_id}")
+        return RemoteServer(
+            remote_server_id=row["remote_server_id"],
+            name=row["name"],
+            host=row["host"],
+            port=int(row["port"]),
+            username=row["username"],
+            auth_type=row["auth_type"],
+            private_key_path=row["private_key_path"],
+            password_ref=row["password_ref"],
+            default_runs_root=row["default_runs_root"],
+        )
 
     def delete_trials_for_experiment(self, experiment_id: str) -> int:
         with self._connect() as conn:

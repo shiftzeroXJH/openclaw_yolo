@@ -47,6 +47,34 @@ def list_experiments() -> dict[str, Any]:
     return _invoke_sync("list-experiments", service.list_experiments)
 
 
+@app.get("/api/remote-servers")
+def list_remote_servers() -> dict[str, Any]:
+    return _invoke_sync("list-remote-servers", service.list_remote_servers)
+
+
+@app.post("/api/remote-servers")
+def create_remote_server(payload: dict[str, Any]) -> dict[str, Any]:
+    body = dict(payload)
+    return _invoke_sync(
+        "create-remote-server",
+        lambda: service.create_remote_server(
+            name=body.get("name", ""),
+            host=body["host"],
+            port=int(body.get("port", 22)),
+            username=body["username"],
+            auth_type=body.get("auth_type", "key"),
+            private_key_path=body.get("private_key_path"),
+            password_ref=body.get("password_ref"),
+            default_runs_root=body.get("default_runs_root"),
+        ),
+    )
+
+
+@app.post("/api/remote-servers/{remote_server_id}/test")
+def test_remote_server(remote_server_id: str) -> dict[str, Any]:
+    return _invoke_sync("test-remote-server", lambda: service.test_remote_server(remote_server_id))
+
+
 @app.post("/api/experiments")
 def create_experiment(payload: dict[str, Any]) -> dict[str, Any]:
     body = dict(payload)
@@ -113,6 +141,7 @@ def run_experiment_trial(experiment_id: str, payload: dict[str, Any] | None = No
         lambda: service.run_trial(
             experiment_id,
             params=body.get("params"),
+            pretrained=body.get("pretrained") or body.get("model"),
             note=body.get("note"),
             reason=body.get("reason"),
         ),
@@ -128,6 +157,35 @@ def import_experiment_trial(experiment_id: str, payload: dict[str, Any]) -> dict
             experiment_id,
             run_dir=body["run_dir"],
             params=body.get("params"),
+            pretrained=body.get("pretrained") or body.get("model"),
+            note=body.get("note"),
+        ),
+    )
+
+
+@app.post("/api/experiments/{experiment_id}/trials/remote-register")
+def register_remote_trial(experiment_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    body = dict(payload)
+    return _invoke_sync(
+        "register-remote-trial",
+        lambda: service.register_remote_trial(
+            experiment_id,
+            remote_server_id=body["remote_server_id"],
+            remote_run_dir=body["remote_run_dir"],
+            note=body.get("note"),
+        ),
+    )
+
+
+@app.post("/api/experiments/{experiment_id}/trials/import-remote")
+def import_remote_trial(experiment_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    body = dict(payload)
+    return _invoke_sync(
+        "import-remote-trial",
+        lambda: service.import_remote_run(
+            experiment_id,
+            remote_server_id=body["remote_server_id"],
+            remote_run_dir=body["remote_run_dir"],
             note=body.get("note"),
         ),
     )
@@ -136,6 +194,11 @@ def import_experiment_trial(experiment_id: str, payload: dict[str, Any]) -> dict
 @app.get("/api/trials/{trial_id}/summary")
 def get_api_summary(trial_id: str, compact: bool = False) -> dict[str, Any]:
     return _invoke_sync("get-api-summary", lambda: service.get_summary(trial_id, compact=compact))
+
+
+@app.post("/api/trials/{trial_id}/remote-sync")
+def sync_remote_trial(trial_id: str) -> dict[str, Any]:
+    return _invoke_sync("sync-remote-trial", lambda: service.sync_remote_trial(trial_id))
 
 
 @app.delete("/api/trials/{trial_id}")

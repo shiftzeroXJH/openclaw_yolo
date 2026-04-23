@@ -1,12 +1,11 @@
 $ErrorActionPreference = "Stop"
 
-$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$frontendRoot = Join-Path $projectRoot "frontend"
 $logDir = Join-Path $projectRoot "logs"
-$stdoutLog = Join-Path $logDir "bridge.stdout.log"
-$stderrLog = Join-Path $logDir "bridge.stderr.log"
-$pidFile = Join-Path $logDir "bridge.pid"
-$bridgeScript = Join-Path $projectRoot "bin\\openclaw-yolo-bridge-win.ps1"
-$dbPath = Join-Path $projectRoot "openclaw_yolo_state.sqlite"
+$stdoutLog = Join-Path $logDir "frontend.stdout.log"
+$stderrLog = Join-Path $logDir "frontend.stderr.log"
+$pidFile = Join-Path $logDir "frontend.pid"
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
@@ -15,9 +14,9 @@ if (Test-Path -LiteralPath $pidFile) {
     if ($existingPidText) {
         $existingProcess = Get-Process -Id ([int]$existingPidText) -ErrorAction SilentlyContinue
         if ($null -ne $existingProcess) {
-            Write-Host "Bridge is already running."
+            Write-Host "Frontend is already running."
             Write-Host "PID: $existingPidText"
-            Write-Host "DB: $dbPath"
+            Write-Host "URL: http://127.0.0.1:5173/"
             Write-Host "stdout: $stdoutLog"
             Write-Host "stderr: $stderrLog"
             Write-Host "pid file: $pidFile"
@@ -28,15 +27,10 @@ if (Test-Path -LiteralPath $pidFile) {
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
 }
 
-$command = @(
-    "`$env:OPENCLAW_YOLO_BRIDGE_DB_PATH='$dbPath'"
-    "Set-Location '$projectRoot'"
-    "& '$bridgeScript'"
-) -join "; "
-
 $process = Start-Process `
-    -FilePath "powershell" `
-    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $command) `
+    -FilePath "npm.cmd" `
+    -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1") `
+    -WorkingDirectory $frontendRoot `
     -RedirectStandardOutput $stdoutLog `
     -RedirectStandardError $stderrLog `
     -WindowStyle Hidden `
@@ -44,9 +38,9 @@ $process = Start-Process `
 
 Set-Content -LiteralPath $pidFile -Value $process.Id -Encoding ascii
 
-Write-Host "Bridge started in background."
+Write-Host "Frontend started in background."
 Write-Host "PID: $($process.Id)"
-Write-Host "DB: $dbPath"
+Write-Host "URL: http://127.0.0.1:5173/"
 Write-Host "stdout: $stdoutLog"
 Write-Host "stderr: $stderrLog"
 Write-Host "pid file: $pidFile"

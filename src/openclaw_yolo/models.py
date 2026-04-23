@@ -47,6 +47,32 @@ class TrialRecord:
     source: str = "trained"
     note: str = ""
     reason: str = ""
+    model: str = ""
+    model_source: str = "experiment_default"
+    params_source: str = "manual"
+    remote_server_id: str = ""
+    remote_run_dir: str = ""
+    sync_status: str = ""
+    sync_error: str = ""
+    remote_training_status: str = ""
+    last_remote_csv_size: int | None = None
+    last_remote_csv_mtime: float | None = None
+    last_synced_epoch_count: int = 0
+    unchanged_sync_count: int = 0
+    last_synced_at: str = ""
+
+
+@dataclass
+class RemoteServer:
+    remote_server_id: str
+    name: str
+    host: str
+    port: int
+    username: str
+    auth_type: str
+    private_key_path: str = ""
+    password_ref: str = ""
+    default_runs_root: str = ""
 
 
 @dataclass

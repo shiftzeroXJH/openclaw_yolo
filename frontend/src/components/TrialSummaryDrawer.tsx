@@ -1,123 +1,140 @@
 import { useEffect, useState } from 'react'
+import { RefreshCw, X } from 'lucide-react'
 import { api } from '../api'
-import { X } from 'lucide-react'
 import { ImageGallery } from './ImageGallery'
 
 interface Props {
   trialId: string
   onClose: () => void
+  onUpdated?: () => void
 }
 
-export function TrialSummaryDrawer({ trialId, onClose }: Props) {
+export function TrialSummaryDrawer({ trialId, onClose, onUpdated }: Props) {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      setData(await api.getTrialSummary(trialId))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    const load = async () => {
-      setLoading(true)
-      try {
-        const res = await api.getTrialSummary(trialId)
-        setData(res)
-      } catch (err) {
-        console.error(err)
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
+    load().catch(console.error)
   }, [trialId])
+
+  const syncRemote = async () => {
+    setSyncing(true)
+    try {
+      await api.syncRemoteTrial(trialId)
+      await load()
+      onUpdated?.()
+    } catch (err: any) {
+      alert(err?.detail?.error || '远程同步失败')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const trial = data?.trial || {}
+  const isRemote = trial.source === 'remote_sftp'
 
   return (
     <>
-      <div 
-        style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 40 }} 
-        onClick={onClose} 
-      />
-      <div 
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.3)', zIndex: 40 }} onClick={onClose} />
+      <div
         style={{
-          position: 'fixed', right: 0, top: 0, bottom: 0, width: '1300px', maxWidth: '95vw',
+          position: 'fixed', right: 0, top: 0, bottom: 0, width: 1300, maxWidth: '95vw',
           zIndex: 50, backgroundColor: 'var(--panel-bg)', display: 'flex', flexDirection: 'column',
           boxShadow: '-4px 0 24px rgba(0,0,0,0.6)', borderLeft: '1px solid var(--panel-border)'
         }}
-        onWheel={(e) => e.stopPropagation()}
       >
-        <div className="flex justify-between items-center p-4 border-b border-panel-border" style={{ borderBottom: '1px solid var(--panel-border)' }}>
-          <div>
-            <h2 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              实验运行 <span className="text-primary">{trialId}</span>
-            </h2>
+        <div className="flex justify-between items-center p-4" style={{ borderBottom: '1px solid var(--panel-border)' }}>
+          <h2 style={{ fontSize: '1.25rem' }}>Trial <span className="text-primary">{trialId}</span></h2>
+          <div className="flex gap-2">
+            {isRemote && (
+              <button className="btn" onClick={syncRemote} disabled={syncing}>
+                <RefreshCw size={16} /> {syncing ? '同步中...' : '刷新远程数据'}
+              </button>
+            )}
+            <button className="btn" style={{ padding: '0.25rem' }} onClick={onClose}><X size={20} /></button>
           </div>
-          <button className="btn" style={{ padding: '0.25rem' }} onClick={onClose}><X size={20} /></button>
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, paddingBottom: '2rem', overscrollBehavior: 'contain' }}>
           {loading ? (
             <div className="text-muted p-4">正在加载报告...</div>
           ) : !data ? (
-            <div className="text-danger p-4">未能加载报告，或该实验尚无结果。</div>
+            <div className="text-danger p-4">未能加载报告。</div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)', gap: '2rem', padding: '1.5rem', alignItems: 'start' }}>
-              {/* Left Column: Trial Images */}
               <div className="flex-col gap-4" style={{ minWidth: 0 }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 600 }}>可视化追踪</h3>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 600 }}>可视化</h3>
                 <ImageGallery trialId={trialId} />
               </div>
 
-              {/* Right Column: Metrics & Params */}
               <div className="flex-col gap-6">
-                {/* Warnings */}
                 {data.warnings?.length > 0 && (
-                  <div className="card" style={{ backgroundColor: 'rgba(245, 158, 11, 0.05)', borderColor: 'rgba(245, 158, 11, 0.2)' }}>
-                    <h3 className="text-warning mb-2" style={{ fontSize: '1rem' }}>运行警告</h3>
+                  <div className="card" style={{ backgroundColor: 'rgba(245,158,11,0.06)' }}>
+                    <h3 className="text-warning mb-2" style={{ fontSize: '1rem' }}>警告</h3>
                     <ul style={{ paddingLeft: '1.25rem', fontSize: '0.875rem' }} className="text-muted">
-                      {data.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}
+                      {data.warnings.map((warning: string, index: number) => <li key={index}>{warning}</li>)}
                     </ul>
                   </div>
                 )}
 
-                {/* Final Metrics */}
-                <div className="flex-col gap-2">
-                  <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>最终测试指标</h3>
+                <section className="flex-col gap-2">
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>当前指标</h3>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
-                    {Object.entries(data.final_metrics || {}).map(([k, v]: [string, any]) => (
-                      <div key={k} className="card p-2 text-center" style={{ padding: '0.75rem' }}>
-                        <div className="text-muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>{k}</div>
-                        <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>{typeof v === 'number' ? v.toFixed(4) : v}</div>
+                    {Object.entries(data.final_metrics || {}).map(([key, value]: [string, any]) => (
+                      <div key={key} className="card p-2 text-center" style={{ padding: '0.75rem' }}>
+                        <div className="text-muted" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>{key}</div>
+                        <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>{typeof value === 'number' ? value.toFixed(4) : value}</div>
                       </div>
                     ))}
                   </div>
-                </div>
+                </section>
 
-                {/* Resource */}
-                <div className="flex-col gap-2">
-                  <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>资源占用</h3>
+                <section className="flex-col gap-2">
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>资源占用 / 来源同步</h3>
                   <div className="table-wrapper">
                     <table>
                       <tbody>
-                        <tr><td className="text-muted" style={{ width: 100 }}>训练用时</td><td>{data.resource?.train_time_sec ? `${data.resource.train_time_sec.toFixed(1)}s` : '-'}</td></tr>
+                        <tr><td className="text-muted">模型</td><td>{trial.model_display || trial.model || '-'}</td></tr>
+                        <tr><td className="text-muted">模型来源</td><td>{trial.model_source || '-'}</td></tr>
+                        <tr><td className="text-muted">参数来源</td><td>{trial.params_source || '-'}</td></tr>
+                        <tr><td className="text-muted">训练状态</td><td>{trial.remote_training_status || trial.status || '-'}</td></tr>
+                        <tr><td className="text-muted">同步状态</td><td>{trial.sync_status || '-'}</td></tr>
+                        <tr><td className="text-muted">最近同步</td><td>{trial.last_synced_at || '-'}</td></tr>
+                        <tr><td className="text-muted">已同步 epoch</td><td>{trial.last_synced_epoch_count ?? '-'}</td></tr>
                         <tr><td className="text-muted">显存峰值</td><td>{data.resource?.gpu_mem_peak ? `${data.resource.gpu_mem_peak} MB` : '-'}</td></tr>
-                        <tr><td className="text-muted">运行目录</td><td style={{ fontSize: '0.75rem', wordBreak: 'break-all' }}>{data.trial?.run_dir || '-'}</td></tr>
+                        <tr><td className="text-muted">本地目录</td><td style={{ fontSize: '0.75rem', wordBreak: 'break-all' }}>{trial.run_dir || '-'}</td></tr>
+                        <tr><td className="text-muted">远程目录</td><td style={{ fontSize: '0.75rem', wordBreak: 'break-all' }}>{trial.remote_run_dir || '-'}</td></tr>
+                        {trial.sync_error && <tr><td className="text-muted">同步错误</td><td className="text-danger">{trial.sync_error}</td></tr>}
                       </tbody>
                     </table>
                   </div>
-                </div>
+                </section>
 
-                {/* Params */}
-                <div className="flex-col gap-2">
-                  <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>详细使用参数</h3>
+                <section className="flex-col gap-2">
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>参数</h3>
                   <div className="table-wrapper">
                     <table>
                       <tbody>
-                        {Object.entries(data.params || {}).map(([k, v]: [string, any]) => (
-                          <tr key={k}>
-                            <td className="text-muted" style={{ width: '50%' }}>{k}</td>
-                            <td>{typeof v === 'number' ? v : String(v)}</td>
+                        {Object.entries(data.params || {}).map(([key, value]: [string, any]) => (
+                          <tr key={key}>
+                            <td className="text-muted" style={{ width: '50%' }}>{key}</td>
+                            <td>{typeof value === 'number' ? value : String(value)}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                </div>
+                </section>
               </div>
             </div>
           )}

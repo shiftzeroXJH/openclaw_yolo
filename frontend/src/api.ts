@@ -39,6 +39,30 @@ export const api = {
     return res.json();
   },
 
+  async getRemoteServers() {
+    const res = await fetch('/api/remote-servers');
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async createRemoteServer(payload: any) {
+    const res = await fetch('/api/remote-servers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async testRemoteServer(remoteServerId: string) {
+    const res = await fetch(`/api/remote-servers/${remoteServerId}/test`, {
+      method: 'POST'
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
   async getExperiment(experimentId: string) {
     const res = await fetch(`/api/experiments/${experimentId}`);
     if (!res.ok) throw await res.json();
@@ -72,6 +96,34 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async registerRemoteTrial(experimentId: string, payload: any) {
+    const res = await fetch(`/api/experiments/${experimentId}/trials/remote-register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async importRemoteTrial(experimentId: string, payload: any) {
+    const res = await fetch(`/api/experiments/${experimentId}/trials/import-remote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async syncRemoteTrial(trialId: string) {
+    const res = await fetch(`/api/trials/${trialId}/remote-sync`, {
+      method: 'POST'
     });
     if (!res.ok) throw await res.json();
     return res.json();

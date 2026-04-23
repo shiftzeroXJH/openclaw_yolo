@@ -1,3 +1,3 @@
 @echo off
 set SCRIPT_DIR=%~dp0
-powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%start-bridge.ps1"
+powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%bin\start-bridge.ps1"
