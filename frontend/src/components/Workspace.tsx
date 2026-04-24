@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Activity, Check, Edit2, RadioTower, Square, Trash2, X } from 'lucide-react'
+import { Activity, Check, Edit2, FolderInput, RadioTower, Square, Trash2, X } from 'lucide-react'
 import { api } from '../api'
 import { ConfirmDialog } from './ConfirmDialog'
 import { DeleteDialog } from './DeleteDialog'
 import { ExperimentCurvesDialog } from './ExperimentCurvesDialog'
+import { LocalTrialDialog } from './LocalTrialDialog'
 import { ParameterEditor } from './ParameterEditor'
 import { RemoteTrialDialog } from './RemoteTrialDialog'
 import { TrialComparisonTable } from './TrialComparisonTable'
@@ -31,6 +32,7 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
   const [isDeleting, setIsDeleting] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [showCurves, setShowCurves] = useState(false)
+  const [showLocalDialog, setShowLocalDialog] = useState(false)
   const [showRemoteDialog, setShowRemoteDialog] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
@@ -167,6 +169,9 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
           <div className="p-4" style={{ borderBottom: '1px solid var(--panel-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ fontSize: '1rem' }}>历次试验对比汇总</h2>
             <div className="flex gap-2">
+              <button className="btn" onClick={() => setShowLocalDialog(true)}>
+                <FolderInput size={16} /> 导入本地训练
+              </button>
               <button className="btn" onClick={() => setShowRemoteDialog(true)}>
                 <RadioTower size={16} /> 导入远程训练
               </button>
@@ -200,6 +205,10 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
           onClose={() => setSelectedTrialId(null)}
           onUpdated={loadData}
         />
+      )}
+
+      {showLocalDialog && (
+        <LocalTrialDialog experimentId={experimentId} onClose={() => setShowLocalDialog(false)} onImported={loadData} />
       )}
 
       {showRemoteDialog && (
