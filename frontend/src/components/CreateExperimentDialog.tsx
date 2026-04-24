@@ -12,7 +12,7 @@ export function CreateExperimentDialog({ onClose, onCreated }: Props) {
     task_type: 'detection',
     dataset_root: '',
     pretrained: 'yolo26n.pt',
-    save_root: '',
+    save_root: 'runs',
     goal_metric: 'map50_95',
     goal_target: '0.65'
   })
@@ -70,7 +70,7 @@ export function CreateExperimentDialog({ onClose, onCreated }: Props) {
             </div>
             <div className="flex-col gap-2 w-full">
               <label style={{ fontSize: '0.875rem' }}>保存目录 (Save Root)</label>
-              <input required className="input" value={form.save_root} onChange={e => setForm({...form, save_root: e.target.value})} placeholder="C:/runs" />
+              <input required className="input" value={form.save_root} onChange={e => setForm({...form, save_root: e.target.value})} placeholder="runs" />
             </div>
           </div>
           

@@ -32,7 +32,12 @@ from openclaw_yolo.core.baseline import build_initial_params
 from openclaw_yolo.core.constraints import validate_param_value
 from openclaw_yolo.core.dataset import inspect_dataset
 from openclaw_yolo.core.param_search import ProposalValidationError, validate_continue_request
-from openclaw_yolo.core.trainer import TrainingError, run_training
+from openclaw_yolo.core.trainer import (
+    TrainingCancelledError,
+    TrainingError,
+    cancel_training_process,
+    run_training,
+)
 from openclaw_yolo.db.repository import Repository
 from openclaw_yolo.models import ExperimentConfig, GoalConfig, RemoteServer, TrialRecord
 from openclaw_yolo.utils import ensure_dir, read_json, utc_now_iso, write_json
@@ -588,6 +593,29 @@ class OrchestratorService:
             "trials": [self._trial_row(trial) for trial in trials],
         }
 
+    def update_experiment(self, experiment_id: str, *, description: str | None = None) -> dict[str, Any]:
+        config = self.repo.get_experiment(experiment_id)
+        if description is None:
+            return {"experiment": config.to_dict()}
+
+        normalized_description = description.strip()
+        if not normalized_description:
+            raise ServiceError("description cannot be empty")
+
+        self.repo.update_experiment_description(experiment_id, normalized_description)
+        config.description = normalized_description
+
+        experiment_json = Path(config.save_root) / "experiments" / experiment_id / EXPERIMENT_FILENAME
+        if experiment_json.exists():
+            write_json(experiment_json, config.to_dict())
+
+        self.repo.add_event(
+            experiment_id,
+            "EXPERIMENT_UPDATED",
+            {"description": normalized_description},
+        )
+        return {"experiment": config.to_dict()}
+
     def show_task(self, experiment_id: str, compact: bool = False) -> dict[str, Any]:
         config = self.repo.get_experiment(experiment_id)
         trials = self.repo.list_trials(experiment_id)
@@ -636,6 +664,8 @@ class OrchestratorService:
     def get_param_metadata(self, experiment_id: str) -> dict[str, Any]:
         config = self.repo.get_experiment(experiment_id)
         trials = self.repo.list_trials(experiment_id)
+        merged_search_space = dict(SEARCH_SPACE)
+        merged_search_space.update(config.search_space or {})
         return {
             "experiment_id": experiment_id,
             "task_type": config.task_type,
@@ -643,8 +673,8 @@ class OrchestratorService:
             "initial_params": config.initial_params,
             "latest_params": self._latest_params(config, trials),
             "default_model": config.pretrained_model,
-            "editable_schema": self._editable_schema(config.search_space),
-            "search_space": config.search_space,
+            "editable_schema": self._editable_schema(merged_search_space),
+            "search_space": merged_search_space,
         }
 
     def validate_params(
@@ -699,16 +729,22 @@ class OrchestratorService:
                 "status": config.status,
                 "message": "task already finalized",
             }
+        normalized_reason = reason or "cancelled by user"
+        process_terminated = cancel_training_process(experiment_id)
+        for trial in self.repo.list_trials(experiment_id):
+            if trial.status in {STATE_TRAINING, STATE_RETRAINING, STATE_ANALYZING, STATE_WAITING}:
+                self.repo.update_trial(trial.trial_id, status=STATE_CANCELLED)
         self.repo.update_experiment_status(experiment_id, STATE_CANCELLED)
         self.repo.add_event(
             experiment_id,
             "TASK_CANCELLED",
-            {"reason": reason or "cancelled by user"},
+            {"reason": normalized_reason, "process_terminated": process_terminated},
         )
         return {
             "experiment_id": experiment_id,
             "status": STATE_CANCELLED,
-            "reason": reason or "cancelled by user",
+            "reason": normalized_reason,
+            "process_terminated": process_terminated,
         }
 
     def delete_task(
@@ -878,7 +914,23 @@ class OrchestratorService:
                 run_dir=str(trial_dir),
                 trial_name=trial_id,
                 params=trial_params,
+                process_key=experiment_id,
             )
+            if self.repo.get_experiment(experiment_id).status == STATE_CANCELLED:
+                self.repo.update_trial(trial_id, status=STATE_CANCELLED)
+                self.repo.add_event(
+                    experiment_id,
+                    "TRIAL_CANCELLED",
+                    {"trial_id": trial_id, "reason": "cancelled by user"},
+                    trial_id,
+                )
+                return {
+                    "status": STATE_CANCELLED,
+                    "trial_id": trial_id,
+                    "run_dir": training_result["run_dir"],
+                    "stdout_log": training_result["stdout_log"],
+                    "stderr_log": training_result["stderr_log"],
+                }
             run_dir = training_result["run_dir"]
             previous_summary = None
             summaries = self.repo.recent_summaries(experiment_id, limit=1)
@@ -912,6 +964,20 @@ class OrchestratorService:
                 "stderr_log": training_result["stderr_log"],
                 "summary_path": str(summary_path),
                 "final_metrics": summary["final_metrics"],
+            }
+        except TrainingCancelledError as exc:
+            self.repo.update_trial(trial_id, status=STATE_CANCELLED)
+            self.repo.update_experiment_status(experiment_id, STATE_CANCELLED)
+            self.repo.add_event(
+                experiment_id,
+                "TRIAL_CANCELLED",
+                {"trial_id": trial_id, "error": str(exc)},
+                trial_id,
+            )
+            return {
+                "status": STATE_CANCELLED,
+                "trial_id": trial_id,
+                "run_dir": str(trial_dir),
             }
         except TrainingError as exc:
             self.repo.update_trial(trial_id, status=STATE_FAILED)
@@ -1394,10 +1460,13 @@ class OrchestratorService:
         config: ExperimentConfig,
         trials: list[TrialRecord],
     ) -> dict[str, Any]:
+        base_params = build_initial_params(config.task_type, config.initial_params)
         for trial in reversed(trials):
             if trial.params:
-                return dict(trial.params)
-        return dict(config.initial_params)
+                merged = dict(base_params)
+                merged.update(trial.params)
+                return merged
+        return dict(base_params)
 
     def _next_iteration(self, trials: list[TrialRecord]) -> int:
         if not trials:

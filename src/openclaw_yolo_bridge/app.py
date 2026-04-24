@@ -101,12 +101,30 @@ def get_experiment(experiment_id: str) -> dict[str, Any]:
     return _invoke_sync("get-experiment", lambda: service.get_experiment_detail(experiment_id))
 
 
+@app.patch("/api/experiments/{experiment_id}")
+def update_experiment(experiment_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    body = dict(payload)
+    return _invoke_sync(
+        "update-experiment",
+        lambda: service.update_experiment(
+            experiment_id,
+            description=body.get("description"),
+        ),
+    )
+
+
 @app.delete("/api/experiments/{experiment_id}")
 def delete_experiment(experiment_id: str, keep_files: bool = False, force: bool = False) -> dict[str, Any]:
     return _invoke_sync(
         "delete-experiment",
         lambda: service.delete_task(experiment_id, keep_files=keep_files, force=force),
     )
+
+
+@app.post("/api/experiments/{experiment_id}/cancel")
+def cancel_experiment(experiment_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    body = dict(payload or {})
+    return _invoke_sync("cancel-experiment", lambda: service.cancel_task(experiment_id, body.get("reason")))
 
 
 @app.get("/api/experiments/{experiment_id}/comparison")

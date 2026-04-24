@@ -245,6 +245,15 @@ class Repository:
                 (status, experiment_id),
             )
 
+    def update_experiment_description(self, experiment_id: str, description: str) -> None:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE experiments SET description = ? WHERE experiment_id = ?",
+                (description, experiment_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"experiment not found: {experiment_id}")
+
     def delete_experiment(self, experiment_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM experiments WHERE experiment_id = ?", (experiment_id,))

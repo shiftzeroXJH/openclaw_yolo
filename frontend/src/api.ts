@@ -69,6 +69,16 @@ export const api = {
     return res.json();
   },
 
+  async updateExperiment(experimentId: string, payload: { description: string }) {
+    const res = await fetch(`/api/experiments/${experimentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
   async getComparison(experimentId: string) {
     const res = await fetch(`/api/experiments/${experimentId}/comparison`);
     if (!res.ok) throw await res.json();
@@ -154,6 +164,16 @@ export const api = {
   async deleteExperiment(experimentId: string, keepFiles: boolean = true, force: boolean = false) {
     const res = await fetch(`/api/experiments/${experimentId}?keep_files=${keepFiles}&force=${force}`, {
       method: 'DELETE'
+    });
+    if (!res.ok) throw await res.json();
+    return res.json();
+  },
+
+  async cancelExperiment(experimentId: string, reason?: string) {
+    const res = await fetch(`/api/experiments/${experimentId}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
     });
     if (!res.ok) throw await res.json();
     return res.json();

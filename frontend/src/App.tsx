@@ -30,11 +30,11 @@ function App() {
   }, [])
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="app-shell">
       {/* Sidebar */}
-      <div className="flex-col" style={{ width: '320px', borderRight: '1px solid var(--panel-border)', backgroundColor: 'var(--panel-bg)'}}>
-        <div className="p-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--panel-border)'}}>
-          <div className="flex items-center gap-2" style={{ fontWeight: 600, color: 'var(--primary-color)'}}>
+      <div className="sidebar-shell">
+        <div className="sidebar-header">
+          <div className="sidebar-brand">
             <ActivitySquare size={20} />
             <span>YOLO 实验面板</span>
           </div>
@@ -42,7 +42,7 @@ function App() {
             <Plus size={16} />
           </button>
         </div>
-        <div className="flex-col" style={{ overflowY: 'auto', flex: 1 }}>
+        <div className="sidebar-scroll">
           <ExperimentList 
             experiments={experiments} 
             activeId={activeExperimentId} 
@@ -52,10 +52,11 @@ function App() {
       </div>
 
       {/* Main Workspace */}
-      <div className="flex-col" style={{ flex: 1, backgroundColor: 'var(--bg-color)', overflowY: 'auto', position: 'relative' }}>
+      <div className="main-shell">
         {activeExperimentId ? (
           <Workspace 
             experimentId={activeExperimentId} 
+            onExperimentUpdated={loadExperiments}
             onDeleted={() => {
               setActiveExperimentId(null);
               loadExperiments();

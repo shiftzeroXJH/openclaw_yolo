@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
 
 import pytest
 from fastapi.testclient import TestClient
 
 from openclaw_yolo.service import OrchestratorService, ServiceError
+from openclaw_yolo.core.trainer import TrainingCancelledError
 from openclaw_yolo_bridge import app as app_module
 
 
@@ -86,6 +88,36 @@ def test_local_run_allows_many_valid_param_changes(monkeypatch: pytest.MonkeyPat
     assert result["trial_id"] == "missing_ok_320_1"
     assert result["final_metrics"]["map50_95"] == 0.44
     assert service.repo.get_trial("missing_ok_320_1").reason == "manual sweep"
+
+
+def test_local_run_returns_cancelled_when_training_is_stopped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    service = OrchestratorService(db_path=":memory:")
+    experiment_id = _create_experiment(service, tmp_path)
+
+    def fake_run_training(**_kwargs):
+        raise TrainingCancelledError("training cancelled by user")
+
+    monkeypatch.setattr("openclaw_yolo.service.run_training", fake_run_training)
+    result = service.run_trial(experiment_id)
+
+    assert result["status"] == "CANCELLED"
+    trial = service.repo.list_trials(experiment_id)[0]
+    assert trial.status == "CANCELLED"
+    assert service.repo.get_experiment(experiment_id).status == "CANCELLED"
+
+
+def test_cancel_task_reports_process_termination(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    service = OrchestratorService(db_path=":memory:")
+    experiment_id = _create_experiment(service, tmp_path)
+    terminated = Event()
+
+    monkeypatch.setattr("openclaw_yolo.service.cancel_training_process", lambda key: terminated.set() or key == experiment_id)
+    response = service.cancel_task(experiment_id, "user stopped")
+
+    assert terminated.is_set()
+    assert response["status"] == "CANCELLED"
+    assert response["process_terminated"] is True
+    assert response["reason"] == "user stopped"
 
 
 def test_openclaw_continue_keeps_three_param_limit(tmp_path: Path) -> None:
@@ -306,6 +338,21 @@ def test_api_experiment_flow(tmp_path: Path) -> None:
     assert create_response.status_code == 200
     experiment_id = create_response.json()["experiment_id"]
 
+    rename_response = client.patch(
+        f"/api/experiments/{experiment_id}",
+        json={"description": "renamed api experiment"},
+    )
+    assert rename_response.status_code == 200
+    assert rename_response.json()["experiment"]["description"] == "renamed api experiment"
+
+    detail_response = client.get(f"/api/experiments/{experiment_id}")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["experiment"]["description"] == "renamed api experiment"
+
+    list_after_rename = client.get("/api/experiments")
+    assert list_after_rename.status_code == 200
+    assert list_after_rename.json()["experiments"][0]["description"] == "renamed api experiment"
+
     params_response = client.get(f"/api/experiments/{experiment_id}/params")
     assert params_response.status_code == 200
     assert params_response.json()["latest_params"]["imgsz"] == 224
@@ -349,6 +396,13 @@ def test_api_experiment_flow(tmp_path: Path) -> None:
 
     blocked_delete = client.delete(f"/api/experiments/{experiment_id}?keep_files=true")
     assert blocked_delete.status_code == 400
+
+    cancel_response = client.post(
+        f"/api/experiments/{experiment_id}/cancel",
+        json={"reason": "api stop"},
+    )
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "CANCELLED"
 
     delete_response = client.delete(f"/api/experiments/{experiment_id}?keep_files=true&force=true")
     assert delete_response.status_code == 200

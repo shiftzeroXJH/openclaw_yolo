@@ -1,24 +1,20 @@
 import { CheckCircle2, CircleDashed, Loader2, Trash2, XCircle } from 'lucide-react'
-import { useState } from 'react'
-import { DeleteDialog } from './DeleteDialog'
 
 interface Props {
   data: any
   onRowClick: (trialId: string) => void
-  onDeleteTrial: (trialId: string, keepFiles: boolean) => Promise<void>
+  onRequestDeleteTrial: (trialId: string) => void
 }
 
-export function TrialComparisonTable({ data, onRowClick, onDeleteTrial }: Props) {
-  const [trialToDelete, setTrialToDelete] = useState<string | null>(null)
-
+export function TrialComparisonTable({ data, onRowClick, onRequestDeleteTrial }: Props) {
   if (!data?.rows?.length) {
-    return <div className="p-4 text-muted">暂无实验记录，请先运行或导入一个 Trial。</div>
+    return <div className="p-4 text-muted">暂无训练记录，请先运行或导入一个 Trial。</div>
   }
 
   const cols = [
     'iteration', 'trial_id', 'status', 'model_display', 'source', 'server',
     'map50_95', 'delta_map50_95', 'precision', 'recall',
-    'best_epoch', 'epochs_completed', 'imgsz', 'batch', 'lr0'
+    'best_epoch', 'epochs_completed', 'imgsz', 'batch', 'lr0', 'patience',
   ]
 
   const formatValue = (val: any) => {
@@ -29,16 +25,23 @@ export function TrialComparisonTable({ data, onRowClick, onDeleteTrial }: Props)
 
   const renderStatus = (row: any) => {
     const status = row.status
-    if (row.remote_training_status === 'maybe_stopped') return <span title="远程可能已停止"><CircleDashed size={16} className="text-warning" /></span>
+    if (row.remote_training_status === 'maybe_stopped') {
+      return <span title="远程训练可能已停止"><CircleDashed size={16} className="text-warning" /></span>
+    }
     switch (status) {
-      case 'COMPLETED': return <CheckCircle2 size={16} className="text-success" />
+      case 'COMPLETED':
+        return <CheckCircle2 size={16} className="text-success" />
       case 'FAILED':
-      case 'CANCELLED': return <XCircle size={16} className="text-danger" />
+      case 'CANCELLED':
+        return <XCircle size={16} className="text-danger" />
       case 'TRAINING':
       case 'RETRAINING':
-      case 'ANALYZING': return <Loader2 size={16} className="text-warning" style={{ animation: 'spin 1s linear infinite' }} />
-      case 'WAITING_USER_CONFIRM': return <CircleDashed size={16} className="text-warning" />
-      default: return status
+      case 'ANALYZING':
+        return <Loader2 size={16} className="text-warning" style={{ animation: 'spin 1s linear infinite' }} />
+      case 'WAITING_USER_CONFIRM':
+        return <CircleDashed size={16} className="text-warning" />
+      default:
+        return status
     }
   }
 
@@ -52,7 +55,7 @@ export function TrialComparisonTable({ data, onRowClick, onDeleteTrial }: Props)
   const cellValue = (row: any, key: string) => {
     if (key === 'status') return renderStatus(row)
     if (key === 'delta_map50_95') return renderDelta(row.delta_map50_95)
-    if (['imgsz', 'batch', 'lr0'].includes(key)) return formatValue(row.params?.[key])
+    if (['imgsz', 'batch', 'lr0', 'patience'].includes(key)) return formatValue(row.params?.[key])
     if (key === 'source') return <span className="badge">{row.source}</span>
     return formatValue(row[key])
   }
@@ -84,8 +87,8 @@ export function TrialComparisonTable({ data, onRowClick, onDeleteTrial }: Props)
                 <button
                   className="btn btn-danger"
                   style={{ padding: '0.2rem 0.4rem', backgroundColor: 'transparent', color: 'var(--danger-color)', border: 'none', boxShadow: 'none' }}
-                  onClick={(event) => { event.stopPropagation(); setTrialToDelete(row.trial_id) }}
-                  title="删除 Trial"
+                  onClick={(event) => { event.stopPropagation(); onRequestDeleteTrial(row.trial_id) }}
+                  title="删除训练记录"
                 >
                   <Trash2 size={16} />
                 </button>
@@ -94,19 +97,6 @@ export function TrialComparisonTable({ data, onRowClick, onDeleteTrial }: Props)
           ))}
         </tbody>
       </table>
-
-      {trialToDelete && (
-        <DeleteDialog
-          title="删除训练记录"
-          message={`确定删除训练记录 ${trialToDelete} 吗？`}
-          dangerousMessage="同时删除本地托管文件"
-          onClose={() => setTrialToDelete(null)}
-          onConfirm={async (keepFiles) => {
-            await onDeleteTrial(trialToDelete, keepFiles)
-            setTrialToDelete(null)
-          }}
-        />
-      )}
     </div>
   )
 }
