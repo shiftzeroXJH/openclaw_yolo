@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { api } from '../api'
 
 interface Props {
@@ -15,7 +15,7 @@ export function RemoteTrialDialog({ experimentId, onClose, onImported }: Props) 
     port: '22',
     username: '',
     private_key_path: '',
-    default_runs_root: ''
+    default_runs_root: '',
   })
   const [remoteServerId, setRemoteServerId] = useState('')
   const [remoteRunDir, setRemoteRunDir] = useState('')
@@ -46,7 +46,7 @@ export function RemoteTrialDialog({ experimentId, onClose, onImported }: Props) 
         username: serverForm.username,
         auth_type: 'key',
         private_key_path: serverForm.private_key_path,
-        default_runs_root: serverForm.default_runs_root
+        default_runs_root: serverForm.default_runs_root,
       })
       await loadServers()
       setRemoteServerId(res.remote_server.remote_server_id)
@@ -65,13 +65,13 @@ export function RemoteTrialDialog({ experimentId, onClose, onImported }: Props) 
         await api.importRemoteTrial(experimentId, {
           remote_server_id: remoteServerId,
           remote_run_dir: remoteRunDir,
-          note
+          note,
         })
       } else {
         await api.registerRemoteTrial(experimentId, {
           remote_server_id: remoteServerId,
           remote_run_dir: remoteRunDir,
-          note
+          note,
         })
       }
       onImported()
@@ -129,7 +129,7 @@ export function RemoteTrialDialog({ experimentId, onClose, onImported }: Props) 
         </div>
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={syncNow} onChange={(e) => setSyncNow(e.target.checked)} />
-          登记后立即同步一次 results.csv
+          登记后立即同步一次 `results.csv`
         </label>
 
         <div className="flex justify-end gap-2">

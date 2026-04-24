@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { api } from '../api'
 
 interface Props {
@@ -45,32 +45,17 @@ export function LocalTrialDialog({ experimentId, onClose, onImported }: Props) {
 
         <div className="flex-col gap-2">
           <label>本地 run 目录</label>
-          <input
-            className="input"
-            value={runDir}
-            onChange={(event) => setRunDir(event.target.value)}
-            placeholder="D:/project/openclaw_yolo/runs/detect/train42"
-          />
+          <input className="input" value={runDir} onChange={(event) => setRunDir(event.target.value)} placeholder="D:/project/openclaw_yolo/runs/detect/train42" />
         </div>
 
         <div className="flex-col gap-2">
           <label>模型路径（可选）</label>
-          <input
-            className="input"
-            value={pretrained}
-            onChange={(event) => setPretrained(event.target.value)}
-            placeholder="留空则优先读取 args.yaml 中的 model"
-          />
+          <input className="input" value={pretrained} onChange={(event) => setPretrained(event.target.value)} placeholder="留空则优先读取 args.yaml 中的 model" />
         </div>
 
         <div className="flex-col gap-2">
           <label>备注（可选）</label>
-          <input
-            className="input"
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            placeholder="例如：外部训练结果导入"
-          />
+          <input className="input" value={note} onChange={(event) => setNote(event.target.value)} placeholder="例如：外部训练结果导入" />
         </div>
 
         <div className="text-muted" style={{ fontSize: '0.8rem' }}>

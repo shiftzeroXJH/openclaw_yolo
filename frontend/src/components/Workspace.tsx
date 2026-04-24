@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { Activity, Check, Edit2, FolderInput, RadioTower, Square, Trash2, X } from 'lucide-react'
 import { api } from '../api'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -21,6 +21,9 @@ const CANCELLABLE_STATUSES = new Set([
   'RETRAINING',
   'ANALYZING',
 ])
+
+const shouldOfferForceDelete = (message: string) =>
+  message.includes('--force') || message.includes('force=true')
 
 export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Props) {
   const [detail, setDetail] = useState<any>(null)
@@ -61,7 +64,7 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
       await loadData()
     } catch (err: any) {
       const msg = err?.detail?.error || '删除失败'
-      if (msg.includes('force=true') && confirm(`${msg}\n是否强制删除该训练记录？`)) {
+      if (shouldOfferForceDelete(msg) && confirm(`${msg}\n是否强制删除该训练记录？`)) {
         await api.deleteTrial(trialId, keepFiles, true)
         await loadData()
       } else {
@@ -251,7 +254,7 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
               onDeleted()
             } catch (err: any) {
               const msg = err?.detail?.error || '删除失败'
-              if (msg.includes('force=true') && confirm(`${msg}\n是否强制删除该实验？`)) {
+              if (shouldOfferForceDelete(msg) && confirm(`${msg}\n是否强制删除该实验？`)) {
                 await api.deleteExperiment(experimentId, keepFiles, true)
                 setIsDeleting(false)
                 onDeleted()

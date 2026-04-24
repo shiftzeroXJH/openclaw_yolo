@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { RefreshCw, X } from 'lucide-react'
 import { api } from '../api'
 import { ImageGallery } from './ImageGallery'
@@ -50,7 +50,7 @@ export function TrialSummaryDrawer({ trialId, onClose, onUpdated }: Props) {
         style={{
           position: 'fixed', right: 0, top: 0, bottom: 0, width: 1300, maxWidth: '95vw',
           zIndex: 50, backgroundColor: 'var(--panel-bg)', display: 'flex', flexDirection: 'column',
-          boxShadow: '-4px 0 24px rgba(0,0,0,0.6)', borderLeft: '1px solid var(--panel-border)'
+          boxShadow: '-4px 0 24px rgba(0,0,0,0.6)', borderLeft: '1px solid var(--panel-border)',
         }}
       >
         <div className="flex justify-between items-center p-4" style={{ borderBottom: '1px solid var(--panel-border)' }}>

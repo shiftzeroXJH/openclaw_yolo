@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp, Settings2 } from 'lucide-react'
 import { api } from '../api'
 
@@ -24,19 +24,19 @@ const PARAM_GROUPS: ParamGroup[] = [
   {
     id: 'optimizer',
     title: '优化器',
-    description: '学习率、优化器类型和学习率调度相关配置。',
+    description: '学习率、优化器类型以及预热和衰减相关配置。',
     keys: ['optimizer', 'lr0', 'lrf', 'momentum', 'weight_decay', 'warmup_epochs', 'cos_lr'],
   },
   {
     id: 'geometry',
     title: '几何增强',
-    description: '适合 AOI 场景的轻量几何扰动，避免破坏芯片结构。',
+    description: '适合 AOI 场景的轻量几何扰动，避免破坏目标结构。',
     keys: ['degrees', 'translate', 'scale', 'shear', 'perspective', 'flipud', 'fliplr'],
   },
   {
     id: 'appearance',
     title: '颜色与拼接增强',
-    description: '颜色扰动和拼接增强，默认保持保守。',
+    description: '颜色扰动和拼接增强，默认保持偏保守。',
     keys: ['hsv_h', 'hsv_s', 'hsv_v', 'mosaic', 'mixup', 'copy_paste'],
   },
 ]
@@ -145,7 +145,7 @@ export function ParameterEditor({ experimentId, onRunSuccess }: Props) {
   const groupedKeys = new Set(PARAM_GROUPS.flatMap((group) => group.keys))
   const extraKeys = Object.keys(schema).filter((key) => !groupedKeys.has(key))
   const groups = extraKeys.length
-    ? [...PARAM_GROUPS, { id: 'extra', title: '其他参数', description: '当前实验额外暴露的参数。', keys: extraKeys }]
+    ? [...PARAM_GROUPS, { id: 'extra', title: '其他参数', description: '当前实验额外暴露的可调参数。', keys: extraKeys }]
     : PARAM_GROUPS
 
   const renderField = (key: string) => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import { Activity, X } from 'lucide-react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../api'
@@ -60,7 +60,7 @@ export function ExperimentCurvesDialog({ experimentId, onClose }: Props) {
     { key: 'metrics/precision(B)', label: 'Precision' },
     { key: 'train/box_loss', label: 'Train Box Loss' },
     { key: 'train/cls_loss', label: 'Train Class Loss' },
-    { key: 'val/box_loss', label: 'Val Box Loss' }
+    { key: 'val/box_loss', label: 'Val Box Loss' },
   ]
 
   return (

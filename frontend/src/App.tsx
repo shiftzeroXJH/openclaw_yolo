@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { api, type Experiment } from './api'
 import { ExperimentList } from './components/ExperimentList'
 import { Workspace } from './components/Workspace'
@@ -31,7 +31,6 @@ function App() {
 
   return (
     <div className="app-shell">
-      {/* Sidebar */}
       <div className="sidebar-shell">
         <div className="sidebar-header">
           <div className="sidebar-brand">
@@ -43,41 +42,35 @@ function App() {
           </button>
         </div>
         <div className="sidebar-scroll">
-          <ExperimentList 
-            experiments={experiments} 
-            activeId={activeExperimentId} 
-            onSelect={setActiveExperimentId} 
-          />
+          <ExperimentList experiments={experiments} activeId={activeExperimentId} onSelect={setActiveExperimentId} />
         </div>
       </div>
 
-      {/* Main Workspace */}
       <div className="main-shell">
         {activeExperimentId ? (
-          <Workspace 
-            experimentId={activeExperimentId} 
+          <Workspace
+            experimentId={activeExperimentId}
             onExperimentUpdated={loadExperiments}
             onDeleted={() => {
-              setActiveExperimentId(null);
-              loadExperiments();
+              setActiveExperimentId(null)
+              loadExperiments()
             }}
           />
         ) : (
           <div className="flex items-center" style={{ justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
-            {loading ? '正在加载工作台...' : '当前无选中实验'}
+            {loading ? '正在加载工作台...' : '当前未选中实验'}
           </div>
         )}
       </div>
 
-      {/* Modals */}
       {showCreate && (
-        <CreateExperimentDialog 
-          onClose={() => setShowCreate(false)} 
+        <CreateExperimentDialog
+          onClose={() => setShowCreate(false)}
           onCreated={(id) => {
             setShowCreate(false)
             loadExperiments()
             setActiveExperimentId(id)
-          }} 
+          }}
         />
       )}
     </div>

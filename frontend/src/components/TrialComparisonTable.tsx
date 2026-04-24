@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleDashed, Loader2, Trash2, XCircle } from 'lucide-react'
+﻿import { CheckCircle2, CircleDashed, Loader2, Trash2, XCircle } from 'lucide-react'
 
 interface Props {
   data: any
@@ -52,6 +52,7 @@ export function TrialComparisonTable({ data, onRowClick, onRequestDeleteTrial }:
       case 'ANALYZING':
         return <Loader2 size={16} className="text-warning" style={{ animation: 'spin 1s linear infinite' }} />
       case 'WAITING_USER_CONFIRM':
+      case 'AUTO_TUNE_PENDING':
         return <CircleDashed size={16} className="text-warning" />
       default:
         return status
