@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Activity, X } from 'lucide-react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../api'
@@ -36,6 +36,14 @@ export function ExperimentCurvesDialog({ experimentId, onClose }: Props) {
     setSelectedTrials(next)
   }
 
+  const trialIds = useMemo(() => Object.keys(data?.curves || {}).sort(), [data])
+
+  const colorMap = useMemo(() => {
+    const map = new Map<string, string>()
+    trialIds.forEach((id, index) => map.set(id, COLORS[index % COLORS.length]))
+    return map
+  }, [trialIds])
+
   const chartData = useMemo(() => {
     if (!data?.curves) return []
     const epochs = new Set<number>()
@@ -53,7 +61,6 @@ export function ExperimentCurvesDialog({ experimentId, onClose }: Props) {
     return points
   }, [data])
 
-  const trialIds = Object.keys(data?.curves || {}).sort()
   const metrics = [
     { key: 'metrics/mAP50-95(B)', label: 'Box mAP50-95' },
     { key: 'metrics/recall(B)', label: 'Recall' },
@@ -62,6 +69,15 @@ export function ExperimentCurvesDialog({ experimentId, onClose }: Props) {
     { key: 'train/cls_loss', label: 'Train Class Loss' },
     { key: 'val/box_loss', label: 'Val Box Loss' },
   ]
+
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    if (event.key === 'Escape') onClose()
+  }, [onClose])
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [handleKeyDown])
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -77,10 +93,10 @@ export function ExperimentCurvesDialog({ experimentId, onClose }: Props) {
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           <div style={{ width: 240, borderRight: '1px solid var(--panel-border)', padding: '1rem', overflowY: 'auto' }}>
             <h3 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem' }} className="text-muted">选择 Trial</h3>
-            {trialIds.map((trialId, index) => (
+            {trialIds.map((trialId) => (
               <label key={trialId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.875rem', marginBottom: '0.5rem' }}>
                 <input type="checkbox" checked={selectedTrials.has(trialId)} onChange={() => toggleTrial(trialId)} />
-                <span style={{ color: selectedTrials.has(trialId) ? COLORS[index % COLORS.length] : 'var(--text-muted)' }}>{trialId}</span>
+                <span style={{ color: selectedTrials.has(trialId) ? colorMap.get(trialId) : 'var(--text-muted)' }}>{trialId}</span>
               </label>
             ))}
           </div>
@@ -106,8 +122,8 @@ export function ExperimentCurvesDialog({ experimentId, onClose }: Props) {
                         <YAxis domain={['auto', 'auto']} />
                         <Tooltip />
                         <Legend />
-                        {trialIds.filter((trialId) => selectedTrials.has(trialId)).map((trialId, index) => (
-                          <Line key={trialId} type="monotone" dataKey={`${trialId}.${metric.key}`} name={trialId} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} connectNulls />
+                        {trialIds.filter((trialId) => selectedTrials.has(trialId)).map((trialId) => (
+                          <Line key={trialId} type="monotone" dataKey={`${trialId}.${metric.key}`} name={trialId} stroke={colorMap.get(trialId)} strokeWidth={2} dot={false} connectNulls />
                         ))}
                       </LineChart>
                     </ResponsiveContainer>

@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { RefreshCw, X } from 'lucide-react'
 import { api } from '../api'
 import { ImageGallery } from './ImageGallery'
@@ -14,18 +14,21 @@ export function TrialSummaryDrawer({ trialId, onClose, onUpdated }: Props) {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
 
-  const load = async () => {
+  const trialIdRef = useRef(trialId)
+  trialIdRef.current = trialId
+
+  const load = useCallback(async () => {
     setLoading(true)
     try {
-      setData(await api.getTrialSummary(trialId))
+      setData(await api.getTrialSummary(trialIdRef.current))
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     load().catch(console.error)
-  }, [trialId])
+  }, [trialId, load])
 
   const syncRemote = async () => {
     setSyncing(true)

@@ -6,9 +6,16 @@ from threading import Lock, Thread
 from typing import Any, Callable
 from uuid import uuid4
 
+_MAX_JOBS = 200
+_JOB_TTL_SECONDS = 3600  # 1 hour
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _utc_now_dt() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -22,9 +29,12 @@ class BridgeJob:
     result: dict[str, Any] | None = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    _created_dt: datetime = field(default_factory=_utc_now_dt, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data.pop("_created_dt", None)
+        return data
 
 
 class JobStore:
@@ -44,6 +54,7 @@ class JobStore:
         )
         with self._lock:
             self._jobs[job.job_id] = job
+            self._evict_stale()
 
         def runner() -> None:
             self._update(job.job_id, status="running")
@@ -71,7 +82,9 @@ class JobStore:
         error: str | None = None,
     ) -> None:
         with self._lock:
-            job = self._jobs[job_id]
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
             if status is not None:
                 job.status = status
             if result is not None:
@@ -79,3 +92,31 @@ class JobStore:
             if error is not None:
                 job.error = error
             job.updated_at = _utc_now()
+
+    def _evict_stale(self) -> None:
+        """Remove completed/failed jobs older than TTL or when exceeding max count.
+
+        Must be called while self._lock is held.
+        """
+        now = _utc_now_dt()
+        stale_ids = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.status in {"completed", "failed"}
+            and (now - job._created_dt).total_seconds() > _JOB_TTL_SECONDS
+        ]
+        for job_id in stale_ids:
+            del self._jobs[job_id]
+
+        if len(self._jobs) > _MAX_JOBS:
+            finished = sorted(
+                (
+                    (job_id, job)
+                    for job_id, job in self._jobs.items()
+                    if job.status in {"completed", "failed"}
+                ),
+                key=lambda item: item[1]._created_dt,
+            )
+            excess = len(self._jobs) - _MAX_JOBS
+            for job_id, _ in finished[:excess]:
+                del self._jobs[job_id]

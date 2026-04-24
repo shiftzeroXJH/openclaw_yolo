@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type Experiment } from './api'
 import { ExperimentList } from './components/ExperimentList'
 import { Workspace } from './components/Workspace'
@@ -11,11 +11,14 @@ function App() {
   const [showCreate, setShowCreate] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const loadExperiments = async () => {
+  const activeIdRef = useRef(activeExperimentId)
+  activeIdRef.current = activeExperimentId
+
+  const loadExperiments = useCallback(async () => {
     try {
       const data = await api.getExperiments()
       setExperiments(data.experiments || [])
-      if (data.experiments?.length > 0 && !activeExperimentId) {
+      if (data.experiments?.length > 0 && !activeIdRef.current) {
         setActiveExperimentId(data.experiments[0].experiment_id)
       }
     } catch (err) {
@@ -23,11 +26,11 @@ function App() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     loadExperiments()
-  }, [])
+  }, [loadExperiments])
 
   return (
     <div className="app-shell">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Settings2 } from 'lucide-react'
 import { api } from '../api'
 
@@ -87,17 +87,20 @@ export function ParameterEditor({ experimentId, onRunSuccess, onClose }: Props) 
   const [validationErrors, setValidationErrors] = useState<any>({})
   const [expanded, setExpanded] = useState<Record<string, boolean>>(DEFAULT_EXPANDED)
 
-  const loadParams = async () => {
-    const data = await api.getParams(experimentId)
+  const experimentIdRef = useRef(experimentId)
+  experimentIdRef.current = experimentId
+
+  const loadParams = useCallback(async () => {
+    const data = await api.getParams(experimentIdRef.current)
     setSchemaData(data)
     setParams(data.latest_params || data.initial_params || {})
     setModel(data.default_model || '')
     setExpanded(DEFAULT_EXPANDED)
-  }
+  }, [])
 
   useEffect(() => {
     loadParams().catch(console.error)
-  }, [experimentId])
+  }, [experimentId, loadParams])
 
   const handleValidate = async () => {
     setValidating(true)

@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 interface Props {
   title: string
@@ -28,6 +28,15 @@ export function ConfirmDialog({
     }
   }
 
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    if (event.key === 'Escape' && !loading) onClose()
+  }, [loading, onClose])
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [handleKeyDown])
+
   return (
     <div
       style={{
@@ -40,6 +49,7 @@ export function ConfirmDialog({
         justifyContent: 'center',
         zIndex: 200,
       }}
+      onClick={(e) => { if (e.target === e.currentTarget && !loading) onClose() }}
     >
       <div className="card" style={{ width: '450px', maxWidth: '100%' }}>
         <h2 style={{ marginBottom: '1rem', fontSize: '1.25rem' }}>{title}</h2>

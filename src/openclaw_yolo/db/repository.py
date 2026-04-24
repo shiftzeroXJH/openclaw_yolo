@@ -29,8 +29,8 @@ class Repository:
 
     def _configure_connection(self, connection: sqlite3.Connection) -> None:
         for statement in (
-            "PRAGMA journal_mode=MEMORY",
-            "PRAGMA synchronous=OFF",
+            "PRAGMA journal_mode=WAL",
+            "PRAGMA synchronous=NORMAL",
             "PRAGMA temp_store=MEMORY",
         ):
             try:

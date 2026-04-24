@@ -22,10 +22,20 @@ export type Experiment = {
   latest_trial?: any; // Define properly if needed
 };
 
+async function safeThrowError(res: Response): Promise<never> {
+  let detail: any;
+  try {
+    detail = await res.json();
+  } catch {
+    detail = { detail: { error: `HTTP ${res.status}: ${res.statusText}` } };
+  }
+  throw detail;
+}
+
 export const api = {
   async getExperiments(): Promise<{ experiments: Experiment[] }> {
     const res = await fetch('/api/experiments');
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -35,13 +45,13 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
   async getRemoteServers() {
     const res = await fetch('/api/remote-servers');
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -51,7 +61,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -59,13 +69,13 @@ export const api = {
     const res = await fetch(`/api/remote-servers/${remoteServerId}/test`, {
       method: 'POST'
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
   async getExperiment(experimentId: string) {
     const res = await fetch(`/api/experiments/${experimentId}`);
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -75,19 +85,19 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
   async getComparison(experimentId: string) {
     const res = await fetch(`/api/experiments/${experimentId}/comparison`);
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
   async getParams(experimentId: string) {
     const res = await fetch(`/api/experiments/${experimentId}/params`);
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -97,7 +107,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ params: payload })
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -107,7 +117,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -117,7 +127,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -127,7 +137,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -135,7 +145,7 @@ export const api = {
     const res = await fetch(`/api/trials/${trialId}/remote-sync`, {
       method: 'POST'
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -145,19 +155,19 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
   async getJob(jobId: string) {
     const res = await fetch(`/jobs/${jobId}`);
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
   async getTrialSummary(trialId: string) {
     const res = await fetch(`/api/trials/${trialId}/summary`);
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -165,7 +175,7 @@ export const api = {
     const res = await fetch(`/api/experiments/${experimentId}?keep_files=${keepFiles}&force=${force}`, {
       method: 'DELETE'
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -175,7 +185,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reason })
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
@@ -183,19 +193,19 @@ export const api = {
     const res = await fetch(`/api/trials/${trialId}?keep_files=${keepFiles}&force=${force}`, {
       method: 'DELETE'
     });
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
   async getExperimentCurves(experimentId: string) {
     const res = await fetch(`/api/experiments/${experimentId}/curves`);
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   },
 
   async getTrialVisualizations(trialId: string) {
     const res = await fetch(`/api/trials/${trialId}/visualizations`);
-    if (!res.ok) throw await res.json();
+    if (!res.ok) await safeThrowError(res);
     return res.json();
   }
 };

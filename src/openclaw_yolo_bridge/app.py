@@ -114,7 +114,7 @@ def update_experiment(experiment_id: str, payload: dict[str, Any]) -> dict[str, 
 
 
 @app.delete("/api/experiments/{experiment_id}")
-def delete_experiment(experiment_id: str, keep_files: bool = False, force: bool = False) -> dict[str, Any]:
+def delete_experiment(experiment_id: str, keep_files: bool = True, force: bool = False) -> dict[str, Any]:
     return _invoke_sync(
         "delete-experiment",
         lambda: service.delete_task(experiment_id, keep_files=keep_files, force=force),
@@ -220,7 +220,7 @@ def sync_remote_trial(trial_id: str) -> dict[str, Any]:
 
 
 @app.delete("/api/trials/{trial_id}")
-def delete_trial(trial_id: str, keep_files: bool = False, force: bool = False) -> dict[str, Any]:
+def delete_trial(trial_id: str, keep_files: bool = True, force: bool = False) -> dict[str, Any]:
     return _invoke_sync(
         "delete-trial",
         lambda: service.delete_trial(trial_id, keep_files=keep_files, force=force),

@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 interface Props {
   title: string
@@ -14,18 +14,33 @@ export function DeleteDialog({ title, message, dangerousMessage, onConfirm, onCl
 
   const handleConfirm = async () => {
     setLoading(true)
-    await onConfirm(keepFiles)
-    setLoading(false)
+    try {
+      await onConfirm(keepFiles)
+    } finally {
+      setLoading(false)
+    }
   }
 
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    if (event.key === 'Escape' && !loading) onClose()
+  }, [loading, onClose])
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [handleKeyDown])
+
   return (
-    <div style={{
-      position: 'fixed', inset: 0,
-      backgroundColor: 'rgba(0,0,0,0.4)',
-      backdropFilter: 'blur(4px)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      zIndex: 200,
-    }}>
+    <div
+      style={{
+        position: 'fixed', inset: 0,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 200,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget && !loading) onClose() }}
+    >
       <div className="card" style={{ width: '450px', maxWidth: '100%', border: '1px solid var(--danger-color)' }}>
         <h2 style={{ marginBottom: '1rem', fontSize: '1.25rem', color: 'var(--danger-color)' }}>{title}</h2>
         <p style={{ marginBottom: '1rem' }}>{message}</p>

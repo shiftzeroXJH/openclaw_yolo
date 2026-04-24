@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Activity, Check, Edit2, FolderInput, RadioTower, Square, Trash2, X, Settings2 } from 'lucide-react'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../api'
@@ -23,6 +23,8 @@ const CANCELLABLE_STATUSES = new Set([
   'ANALYZING',
 ])
 
+const CHART_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6']
+
 const shouldOfferForceDelete = (message: string) =>
   message.includes('--force') || message.includes('force=true')
 
@@ -44,13 +46,16 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
   const [renameValue, setRenameValue] = useState('')
   const [renaming, setRenaming] = useState(false)
 
-  const loadData = async () => {
+  const experimentIdRef = useRef(experimentId)
+  experimentIdRef.current = experimentId
+
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [det, comp, curvesData] = await Promise.all([
-        api.getExperiment(experimentId),
-        api.getComparison(experimentId),
-        api.getExperimentCurves(experimentId).catch(() => null),
+        api.getExperiment(experimentIdRef.current),
+        api.getComparison(experimentIdRef.current),
+        api.getExperimentCurves(experimentIdRef.current).catch(() => null),
       ])
       setDetail(det)
       setComparison(comp)
@@ -81,11 +86,12 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
+    experimentIdRef.current = experimentId
     loadData()
-  }, [experimentId])
+  }, [experimentId, loadData])
 
   const handleDeleteTrial = async (trialId: string, keepFiles: boolean) => {
     try {
@@ -226,10 +232,9 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
                     <YAxis domain={['auto', 'auto']} tick={{fontSize: 11, fill: 'var(--text-muted)'}} axisLine={false} tickLine={false} width={40} />
                     <Tooltip contentStyle={{ borderRadius: 8, border: 'none', boxShadow: 'var(--shadow-md)', background: 'rgba(255,255,255,0.95)' }} />
                     <Legend wrapperStyle={{ fontSize: 11, paddingTop: '4px' }} iconType="circle" iconSize={8} />
-                    {trialIds.map((trialId, index) => {
-                      const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6'];
-                      return <Line key={trialId} type="monotone" dataKey={`${trialId}.map`} name={trialId} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
-                    })}
+                    {trialIds.map((trialId, index) => (
+                      <Line key={trialId} type="monotone" dataKey={`${trialId}.map`} name={trialId} stroke={CHART_COLORS[index % CHART_COLORS.length]} strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -242,10 +247,9 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
                     <YAxis domain={['auto', 'auto']} tick={{fontSize: 11, fill: 'var(--text-muted)'}} axisLine={false} tickLine={false} width={40} />
                     <Tooltip contentStyle={{ borderRadius: 8, border: 'none', boxShadow: 'var(--shadow-md)', background: 'rgba(255,255,255,0.95)' }} />
                     <Legend wrapperStyle={{ fontSize: 11, paddingTop: '4px' }} iconType="circle" iconSize={8} />
-                    {trialIds.map((trialId, index) => {
-                      const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6'];
-                      return <Line key={trialId} type="monotone" dataKey={`${trialId}.recall`} name={trialId} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
-                    })}
+                    {trialIds.map((trialId, index) => (
+                      <Line key={trialId} type="monotone" dataKey={`${trialId}.recall`} name={trialId} stroke={CHART_COLORS[index % CHART_COLORS.length]} strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -317,7 +321,7 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
       {isDeleting && (
         <DeleteDialog
           title="删除任务"
-          message={`确定删除实验“${experiment.description}”吗？此操作会移除该实验下的所有 Trial 记录。`}
+          message={`确定删除实验"${experiment.description}"吗？此操作会移除该实验下的所有 Trial 记录。`}
           dangerousMessage="同时删除本地托管的训练文件"
           onClose={() => setIsDeleting(false)}
           onConfirm={async (keepFiles) => {

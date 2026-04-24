@@ -262,7 +262,8 @@ def _notify_status(latest_event: dict[str, Any] | None) -> dict[str, Any] | None
 
 
 def _stale_task_cutoff_iso(max_age_hours: int) -> str:
-    return (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).replace(microsecond=0).isoformat()
+    dt = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    return dt.replace(microsecond=0, tzinfo=None).isoformat()
 
 
 def _notify_openclaw_session(session_id: str, message: str) -> None:
@@ -318,7 +319,7 @@ def _handle_rmtree_error(func: Any, path: str, exc_info: Any) -> None:
         os_path.chmod(stat.S_IWRITE)
         func(path)
     except Exception:
-        raise exc_info[1]
+        raise exc_info[1].with_traceback(exc_info[2])
 
 
 class OrchestratorService:
@@ -551,9 +552,21 @@ class OrchestratorService:
         experiments = self.repo.list_experiments()
         items: list[dict[str, Any]] = []
         for config in experiments:
-            comparison = self.compare_experiment(config.experiment_id)
             trials = self.repo.list_trials(config.experiment_id)
             latest_trial = trials[-1] if trials else None
+            metric = config.goal.metric
+            best_trial_info = None
+            best_value = None
+            for trial in trials:
+                value = trial.metrics.get(metric) if trial.metrics else None
+                if isinstance(value, (int, float)) and (best_value is None or value > best_value):
+                    best_value = float(value)
+                    best_trial_info = {
+                        "trial_id": trial.trial_id,
+                        "iteration": trial.iteration,
+                        "metric": metric,
+                        "value": best_value,
+                    }
             items.append(
                 {
                     "experiment_id": config.experiment_id,
@@ -565,7 +578,7 @@ class OrchestratorService:
                     "pretrained_model": config.pretrained_model,
                     "goal": config.goal.__dict__,
                     "trial_count": len(trials),
-                    "best_metric": comparison["best_trial"],
+                    "best_metric": best_trial_info,
                     "latest_trial": None
                     if latest_trial is None
                     else {
@@ -946,7 +959,7 @@ class OrchestratorService:
             ).to_dict()
             summary_path = trial_dir / SUMMARY_FILENAME
             write_json(summary_path, summary)
-            next_status = self._completion_status(config, summary, iteration)
+            next_status = self._completion_status(config, summary, len(trials) + 1)
             self.repo.update_trial(
                 trial_id,
                 status=next_status,
@@ -1163,7 +1176,7 @@ class OrchestratorService:
         summary_path = trial_dir / SUMMARY_FILENAME
         write_json(trial_dir / TRIAL_CONFIG_FILENAME, trial_params)
         write_json(summary_path, summary)
-        next_status = self._completion_status(config, summary, iteration)
+        next_status = self._completion_status(config, summary, len(self.repo.list_trials(experiment_id)) + 1)
         trial = TrialRecord(
             trial_id=trial_id,
             experiment_id=experiment_id,
@@ -1357,7 +1370,7 @@ class OrchestratorService:
                 write_json(summary_path, summary)
                 final_metrics = summary["final_metrics"]
                 next_status = (
-                    self._completion_status(config, summary, trial.iteration)
+                    self._completion_status(config, summary, len(self.repo.list_trials(trial.experiment_id)))
                     if remote_training_status == REMOTE_TRAINING_COMPLETED
                     else STATE_TRAINING
                     if remote_training_status == REMOTE_TRAINING_RUNNING
@@ -1687,12 +1700,18 @@ class OrchestratorService:
         self,
         config: ExperimentConfig,
         summary: dict[str, Any],
-        trial_count: int,
+        total_trial_count: int,
     ) -> str:
+        """Determine experiment status after a trial completes.
+
+        *total_trial_count* must be the **actual number of trials** that exist
+        for this experiment (not the iteration ordinal which may diverge after
+        deletions).
+        """
         metric_value = float(summary["final_metrics"].get(config.goal.metric, 0.0))
         if metric_value >= config.goal.target:
             return STATE_COMPLETED
-        if trial_count >= int(config.stop_conditions["max_trials"]):
+        if total_trial_count >= int(config.stop_conditions["max_trials"]):
             return STATE_COMPLETED
         return STATE_WAITING
 
@@ -1791,9 +1810,10 @@ class OrchestratorService:
 
     def get_trial_file_path(self, trial_id: str, filename: str) -> str:
         trial = self.repo.get_trial(trial_id)
-        file_path = Path(trial.run_dir) / filename
+        run_dir_resolved = Path(trial.run_dir).resolve()
+        file_path = (run_dir_resolved / filename).resolve()
+        if not file_path.is_relative_to(run_dir_resolved):
+            raise ServiceError("invalid filename")
         if not file_path.exists() or not file_path.is_file():
             raise ServiceError("file not found")
-        if file_path.resolve().parent != Path(trial.run_dir).resolve():
-            raise ServiceError("invalid filename")
-        return str(file_path.resolve())
+        return str(file_path)
