@@ -8,7 +8,7 @@ TASK_BASELINES: dict[str, dict[str, Any]] = {
         "batch": 16,
         "workers": 2,
         "epochs": 100,
-        "patience": 30,
+        "patience": 10,
         "optimizer": "AdamW",
         "lr0": 0.001,
         "lrf": 0.1,

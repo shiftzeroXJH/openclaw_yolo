@@ -7,6 +7,19 @@ interface Props {
 }
 
 export function TrialComparisonTable({ data, onRowClick, onRequestDeleteTrial }: Props) {
+  const sourceLabel = (source: string) => {
+    switch (source) {
+      case 'trained':
+        return '本地训练'
+      case 'imported':
+        return '本地导入'
+      case 'remote_sftp':
+        return '远程导入'
+      default:
+        return source || '-'
+    }
+  }
+
   if (!data?.rows?.length) {
     return <div className="p-4 text-muted">暂无训练记录，请先运行或导入一个 Trial。</div>
   }
@@ -56,7 +69,7 @@ export function TrialComparisonTable({ data, onRowClick, onRequestDeleteTrial }:
     if (key === 'status') return renderStatus(row)
     if (key === 'delta_map50_95') return renderDelta(row.delta_map50_95)
     if (['imgsz', 'batch', 'lr0', 'patience'].includes(key)) return formatValue(row.params?.[key])
-    if (key === 'source') return <span className="badge">{row.source}</span>
+    if (key === 'source') return <span className="badge">{sourceLabel(row.source)}</span>
     return formatValue(row[key])
   }
 

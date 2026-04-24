@@ -20,7 +20,6 @@ const CANCELLABLE_STATUSES = new Set([
   'TRAINING',
   'RETRAINING',
   'ANALYZING',
-  'WAITING_USER_CONFIRM',
 ])
 
 export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Props) {
@@ -115,8 +114,8 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
     <div className="workspace-grid">
       <div className="workspace-center">
         <div className="card">
-          <div className="flex justify-between items-center bg-transparent">
-            <div>
+          <div className="workspace-summary-header">
+            <div style={{ minWidth: 0 }}>
               {isRenaming ? (
                 <div className="flex items-center gap-2" style={{ marginBottom: '0.25rem' }}>
                   <input
@@ -138,7 +137,7 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-2" style={{ marginBottom: '0.25rem' }}>
+                <div className="flex items-center gap-2" style={{ marginBottom: '0.25rem', flexWrap: 'wrap' }}>
                   <h1 style={{ fontSize: '1.25rem' }}>{experiment.description}</h1>
                   <button className="btn" style={{ padding: '0.25rem 0.45rem' }} onClick={startRename} title="重命名">
                     <Edit2 size={14} /> 重命名
@@ -152,13 +151,13 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
                 <span>试验次数：{detail.trial_count || 0}</span>
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="workspace-summary-actions">
               {canCancel && (
-                <button className="btn" onClick={() => setIsCancelling(true)} title="停止任务">
+                <button className="btn workspace-action-btn" onClick={() => setIsCancelling(true)} title="停止任务">
                   <Square size={16} /> 停止任务
                 </button>
               )}
-              <button className="btn btn-danger" onClick={() => setIsDeleting(true)} title="删除任务">
+              <button className="btn btn-danger workspace-action-btn" onClick={() => setIsDeleting(true)} title="删除任务">
                 <Trash2 size={16} /> 删除任务
               </button>
             </div>
@@ -168,7 +167,7 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
         <div className="card comparison-card">
           <div className="p-4" style={{ borderBottom: '1px solid var(--panel-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ fontSize: '1rem' }}>历次试验对比汇总</h2>
-            <div className="flex gap-2">
+            <div className="flex gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               <button className="btn" onClick={() => setShowLocalDialog(true)}>
                 <FolderInput size={16} /> 导入本地训练
               </button>
