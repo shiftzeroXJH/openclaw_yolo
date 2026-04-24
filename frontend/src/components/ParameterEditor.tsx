@@ -1,10 +1,11 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronUp, Settings2 } from 'lucide-react'
 import { api } from '../api'
 
 interface Props {
   experimentId: string
   onRunSuccess: () => void
+  onClose?: () => void
 }
 
 type ParamGroup = {
@@ -76,7 +77,7 @@ const DEFAULT_EXPANDED: Record<string, boolean> = {
   appearance: false,
 }
 
-export function ParameterEditor({ experimentId, onRunSuccess }: Props) {
+export function ParameterEditor({ experimentId, onRunSuccess, onClose }: Props) {
   const [schemaData, setSchemaData] = useState<any>(null)
   const [params, setParams] = useState<any>({})
   const [model, setModel] = useState('')
@@ -124,6 +125,7 @@ export function ParameterEditor({ experimentId, onRunSuccess }: Props) {
       await api.runTrial(experimentId, { params, pretrained: model, note, reason: 'Manual tuning' })
       setNote('')
       onRunSuccess()
+      onClose?.()
     } catch (err: any) {
       alert(err?.detail?.error || '运行失败')
     } finally {
@@ -207,7 +209,7 @@ export function ParameterEditor({ experimentId, onRunSuccess }: Props) {
   }
 
   return (
-    <div className="card h-full flex-col parameter-editor-shell" style={{ overflow: 'hidden' }}>
+    <div className="h-full flex-col parameter-editor-shell" style={{ display: 'flex', overflow: 'hidden', padding: '1.5rem', background: 'transparent', boxShadow: 'none', border: 'none' }}>
       <div className="parameter-header">
         <div>
           <h2 className="parameter-title">本地训练参数</h2>
@@ -262,9 +264,9 @@ export function ParameterEditor({ experimentId, onRunSuccess }: Props) {
           <input className="input" value={note} onChange={(event) => setNote(event.target.value)} />
         </div>
         <div className="flex gap-2">
-          <button className="btn flex-1" onClick={handleValidate} disabled={validating || loading}>校验参数</button>
+          {onClose && <button className="btn flex-1" onClick={onClose} disabled={validating || loading}>关闭</button>}
           <button className="btn btn-primary flex-1" onClick={handleRun} disabled={loading || validating}>
-            {loading ? '正在启动...' : '开始训练'}
+            {loading ? '正在启动...' : '开始训练 (自动校验)'}
           </button>
         </div>
       </div>

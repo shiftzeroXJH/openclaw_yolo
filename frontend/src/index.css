@@ -132,7 +132,7 @@ body,
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 520px;
+  grid-template-columns: minmax(0, 1fr); /* Right pane moved to drawer */
   gap: 1rem;
   height: 100%;
   min-height: 0;
@@ -528,11 +528,6 @@ tr:hover td {
   background: rgba(0,0,0,0.3);
 }
 
-@media (max-width: 1380px) {
-  .workspace-grid {
-    grid-template-columns: minmax(0, 1fr) 460px;
-  }
-}
 
 @media (max-width: 1120px) {
   .workspace-grid {
@@ -564,4 +559,74 @@ tr:hover td {
     flex-direction: column;
     align-items: stretch;
   }
+}
+
+
+/* Drawer Styles */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 100;
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
+.drawer-content {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 520px;
+  max-width: 90vw;
+  background-color: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-left: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.08);
+  z-index: 101;
+  transform: translateX(100%);
+  animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes slideInRight {
+  to { transform: translateX(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Inline Chart Card */
+.inline-chart-card {
+  padding: 1rem;
+  background: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0.4));
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Enhancing Hover Effects on Tables */
+tr {
+  transition: background-color 0.15s ease-in-out;
+}
+tr:hover td {
+  background-color: rgba(37, 99, 235, 0.04) !important;
+}
+
+.card {
+  background: linear-gradient(to bottom, rgba(255,255,255,0.8), rgba(255,255,255,0.6));
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.03), 0 2px 4px -2px rgba(0, 0, 0, 0.02);
+  border-top: 1px solid rgba(255,255,255,0.9);
+}
+
+.table-wrapper {
+  background: linear-gradient(to bottom, rgba(255,255,255,0.6), rgba(255,255,255,0.3));
 }

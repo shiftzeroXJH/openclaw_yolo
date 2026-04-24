@@ -1,5 +1,6 @@
-﻿import { useEffect, useState } from 'react'
-import { Activity, Check, Edit2, FolderInput, RadioTower, Square, Trash2, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Activity, Check, Edit2, FolderInput, RadioTower, Square, Trash2, X, Settings2 } from 'lucide-react'
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../api'
 import { ConfirmDialog } from './ConfirmDialog'
 import { DeleteDialog } from './DeleteDialog'
@@ -33,6 +34,9 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
   const [loading, setLoading] = useState(true)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [showParameterDrawer, setShowParameterDrawer] = useState(false)
+  const [chartData, setChartData] = useState<any[]>([])
+  const [trialIds, setTrialIds] = useState<string[]>([])
   const [showCurves, setShowCurves] = useState(false)
   const [showLocalDialog, setShowLocalDialog] = useState(false)
   const [showRemoteDialog, setShowRemoteDialog] = useState(false)
@@ -43,12 +47,37 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
   const loadData = async () => {
     setLoading(true)
     try {
-      const [det, comp] = await Promise.all([
+      const [det, comp, curvesData] = await Promise.all([
         api.getExperiment(experimentId),
         api.getComparison(experimentId),
+        api.getExperimentCurves(experimentId).catch(() => null),
       ])
       setDetail(det)
       setComparison(comp)
+      
+      if (curvesData?.curves) {
+        const topTrials = Object.keys(curvesData.curves).sort().reverse().slice(0, 5)
+        setTrialIds(topTrials)
+        const epochs = new Set<number>()
+        Object.values(curvesData.curves).forEach((rows: any) => rows.forEach((row: any) => epochs.add(row.epoch)))
+        const maxEpoch = Math.max(0, ...Array.from(epochs))
+        
+        const points = []
+        for (let epoch = 1; epoch <= maxEpoch; epoch += 1) {
+          const point: any = { epoch }
+          topTrials.forEach((trialId) => {
+            const row = curvesData.curves[trialId].find((item: any) => item.epoch === epoch)
+            if (row) {
+              if (typeof row['metrics/mAP50-95(B)'] === 'number') point[`${trialId}.map`] = row['metrics/mAP50-95(B)']
+              if (typeof row['metrics/recall(B)'] === 'number') point[`${trialId}.recall`] = row['metrics/recall(B)']
+            }
+          })
+          points.push(point)
+        }
+        setChartData(points)
+      } else {
+        setChartData([])
+      }
     } finally {
       setLoading(false)
     }
@@ -155,6 +184,9 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
               </div>
             </div>
             <div className="workspace-summary-actions">
+              <button className="btn btn-primary workspace-action-btn" onClick={() => setShowParameterDrawer(true)} title="本地训练调参">
+                <Settings2 size={16} /> 本地调参
+              </button>
               {canCancel && (
                 <button className="btn workspace-action-btn" onClick={() => setIsCancelling(true)} title="停止任务">
                   <Square size={16} /> 停止任务
@@ -183,7 +215,43 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
               <button className="btn" onClick={loadData}>刷新</button>
             </div>
           </div>
-          <div style={{ flex: 1, overflow: 'hidden' }}>
+          {chartData.length > 0 && (
+            <div className="flex gap-4" style={{ margin: '1rem', marginBottom: 0 }}>
+              <div className="inline-chart-card flex-1" style={{ height: 260, margin: 0, paddingBottom: 0 }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, textAlign: 'center', marginBottom: '0.5rem', color: 'var(--text-main)' }}>mAP50-95 (最近 5 次 Trial)</div>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.2)" vertical={false} />
+                    <XAxis dataKey="epoch" tick={{fontSize: 11, fill: 'var(--text-muted)'}} axisLine={false} tickLine={false} />
+                    <YAxis domain={['auto', 'auto']} tick={{fontSize: 11, fill: 'var(--text-muted)'}} axisLine={false} tickLine={false} width={40} />
+                    <Tooltip contentStyle={{ borderRadius: 8, border: 'none', boxShadow: 'var(--shadow-md)', background: 'rgba(255,255,255,0.95)' }} />
+                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: '4px' }} iconType="circle" iconSize={8} />
+                    {trialIds.map((trialId, index) => {
+                      const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6'];
+                      return <Line key={trialId} type="monotone" dataKey={`${trialId}.map`} name={trialId} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="inline-chart-card flex-1" style={{ height: 260, margin: 0, paddingBottom: 0 }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, textAlign: 'center', marginBottom: '0.5rem', color: 'var(--text-main)' }}>Recall (最近 5 次 Trial)</div>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.2)" vertical={false} />
+                    <XAxis dataKey="epoch" tick={{fontSize: 11, fill: 'var(--text-muted)'}} axisLine={false} tickLine={false} />
+                    <YAxis domain={['auto', 'auto']} tick={{fontSize: 11, fill: 'var(--text-muted)'}} axisLine={false} tickLine={false} width={40} />
+                    <Tooltip contentStyle={{ borderRadius: 8, border: 'none', boxShadow: 'var(--shadow-md)', background: 'rgba(255,255,255,0.95)' }} />
+                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: '4px' }} iconType="circle" iconSize={8} />
+                    {trialIds.map((trialId, index) => {
+                      const COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6'];
+                      return <Line key={trialId} type="monotone" dataKey={`${trialId}.recall`} name={trialId} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} connectNulls activeDot={{ r: 4 }} />
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+          <div style={{ flex: 1, overflow: 'hidden', marginTop: chartData.length > 0 ? '1rem' : '0' }}>
             {comparison ? (
               <TrialComparisonTable
                 data={comparison}
@@ -197,9 +265,14 @@ export function Workspace({ experimentId, onExperimentUpdated, onDeleted }: Prop
         </div>
       </div>
 
-      <div className="training-column">
-        <ParameterEditor experimentId={experimentId} onRunSuccess={loadData} />
-      </div>
+      {showParameterDrawer && (
+        <>
+          <div className="drawer-overlay" onClick={() => setShowParameterDrawer(false)} />
+          <div className="drawer-content">
+            <ParameterEditor experimentId={experimentId} onRunSuccess={loadData} onClose={() => setShowParameterDrawer(false)} />
+          </div>
+        </>
+      )}
 
       {selectedTrialId && (
         <TrialSummaryDrawer
