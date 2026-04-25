@@ -27,8 +27,11 @@ if (Test-Path -LiteralPath $pidFile) {
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
 }
 
+$srcPath = Join-Path $projectRoot "src"
+
 $command = @(
     "`$env:OPENCLAW_YOLO_BRIDGE_DB_PATH='$dbPath'"
+    "`$env:PYTHONPATH='$srcPath'"
     "Set-Location '$projectRoot'"
     "& mamba run -n yolo_env python -m openclaw_yolo_bridge.app"
 ) -join "; "
