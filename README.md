@@ -8,6 +8,12 @@
 
 `FastAPI` · `React` · `Recharts` · `SQLite` · `Ultralytics YOLO`
 
+### 界面预览
+
+<img src="docs/效果展示.png" alt="OpenClaw YOLO 前端界面展示" width="900" />
+
+<p><sub>实验工作台、训练曲线对比与可视化结果总览</sub></p>
+
 </div>
 
 ---
