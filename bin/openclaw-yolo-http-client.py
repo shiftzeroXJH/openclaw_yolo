@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import sys
 import urllib.error
 import urllib.parse
@@ -11,29 +12,68 @@ import urllib.request
 from typing import Any
 
 
-BASE_URL = os.environ.get("OPENCLAW_YOLO_BRIDGE_URL", "http://127.0.0.1:8765")
+DEFAULT_BASE_URL = "http://127.0.0.1:8765"
+BASE_URL = os.environ.get("OPENCLAW_YOLO_BRIDGE_URL", DEFAULT_BASE_URL)
+NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _wsl_windows_host_url() -> str | None:
+    if platform.system().lower() != "linux":
+        return None
+    try:
+        with open("/proc/version", "r", encoding="utf-8") as handle:
+            if "microsoft" not in handle.read().lower():
+                return None
+    except OSError:
+        return None
+
+    for path in ("/etc/resolv.conf",):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    parts = line.strip().split()
+                    if len(parts) == 2 and parts[0] == "nameserver":
+                        return f"http://{parts[1]}:8765"
+        except OSError:
+            continue
+    return None
+
+
+def _candidate_base_urls() -> list[str]:
+    urls = [BASE_URL.rstrip("/")]
+    if "OPENCLAW_YOLO_BRIDGE_URL" not in os.environ:
+        wsl_url = _wsl_windows_host_url()
+        if wsl_url and wsl_url.rstrip("/") not in urls:
+            urls.append(wsl_url.rstrip("/"))
+    return urls
 
 
 def _request(method: str, path: str, payload: dict[str, Any] | None = None) -> int:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        urllib.parse.urljoin(f"{BASE_URL}/", path.lstrip("/")),
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method=method,
-    )
-    try:
-        with urllib.request.urlopen(request) as response:
-            body = response.read().decode("utf-8")
-            print(body)
-            return 0
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8")
-        print(body or json.dumps({"error": f"HTTP {exc.code}"}))
-        return 1
-    except urllib.error.URLError as exc:
-        print(json.dumps({"error": f"bridge unavailable: {exc.reason}"}))
-        return 1
+    last_error = ""
+    for base_url in _candidate_base_urls():
+        request = urllib.request.Request(
+            urllib.parse.urljoin(f"{base_url}/", path.lstrip("/")),
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method=method,
+        )
+        try:
+            with NO_PROXY_OPENER.open(request, timeout=30) as response:
+                body = response.read().decode("utf-8")
+                print(body)
+                return 0
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8")
+            if exc.code in {502, 503, 504}:
+                last_error = f"{base_url}: HTTP {exc.code}"
+                continue
+            print(body or json.dumps({"error": f"HTTP {exc.code}", "base_url": base_url}))
+            return 1
+        except urllib.error.URLError as exc:
+            last_error = f"{base_url}: {exc.reason}"
+    print(json.dumps({"error": f"bridge unavailable: {last_error}"}))
+    return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -90,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_parser.add_argument("--dataset-root", required=True)
     create_parser.add_argument("--dataset-yaml")
     create_parser.add_argument("--pretrained", required=True)
-    create_parser.add_argument("--save-root", required=True)
+    create_parser.add_argument("--save-root", default="runs")
     create_parser.add_argument("--goal", required=True)
     create_parser.add_argument("--auto-iterate", default="false")
     create_parser.add_argument("--confirm-timeout", type=int, default=60)

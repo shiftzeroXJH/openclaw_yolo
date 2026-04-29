@@ -31,6 +31,8 @@ $srcPath = Join-Path $projectRoot "src"
 
 $command = @(
     "`$env:OPENCLAW_YOLO_BRIDGE_DB_PATH='$dbPath'"
+    "`$env:OPENCLAW_YOLO_BRIDGE_HOST='0.0.0.0'"
+    "`$env:OPENCLAW_YOLO_BRIDGE_PORT='8765'"
     "`$env:PYTHONPATH='$srcPath'"
     "Set-Location '$projectRoot'"
     "& mamba run -n yolo_env python -m openclaw_yolo_bridge.app"
@@ -48,6 +50,7 @@ Set-Content -LiteralPath $pidFile -Value $process.Id -Encoding ascii
 
 Write-Host "Bridge started in background."
 Write-Host "PID: $($process.Id)"
+Write-Host "URL: http://127.0.0.1:8765/"
 Write-Host "DB: $dbPath"
 Write-Host "stdout: $stdoutLog"
 Write-Host "stderr: $stderrLog"

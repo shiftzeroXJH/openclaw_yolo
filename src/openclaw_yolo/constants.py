@@ -2,34 +2,38 @@ from __future__ import annotations
 
 from typing import Any
 
+YOLO_BASELINE: dict[str, Any] = {
+    "imgsz": 640,
+    "batch": 16,
+    "workers": 2,
+    "epochs": 100,
+    "patience": 10,
+    "optimizer": "AdamW",
+    "lr0": 0.001,
+    "lrf": 0.1,
+    "momentum": 0.937,
+    "warmup_epochs": 3.0,
+    "cos_lr": True,
+    "weight_decay": 0.0005,
+    "mosaic": 0.0,
+    "mixup": 0.0,
+    "copy_paste": 0.0,
+    "degrees": 2.0,
+    "translate": 0.03,
+    "scale": 0.10,
+    "shear": 0.0,
+    "perspective": 0.0,
+    "flipud": 0.0,
+    "fliplr": 0.0,
+    "hsv_h": 0.0,
+    "hsv_s": 0.10,
+    "hsv_v": 0.15,
+}
+
 TASK_BASELINES: dict[str, dict[str, Any]] = {
-    "detection": {
-        "imgsz": 640,
-        "batch": 16,
-        "workers": 2,
-        "epochs": 100,
-        "patience": 10,
-        "optimizer": "AdamW",
-        "lr0": 0.001,
-        "lrf": 0.1,
-        "momentum": 0.937,
-        "warmup_epochs": 3.0,
-        "cos_lr": True,
-        "weight_decay": 0.0005,
-        "mosaic": 0.0,
-        "mixup": 0.0,
-        "copy_paste": 0.0,
-        "degrees": 2.0,
-        "translate": 0.03,
-        "scale": 0.10,
-        "shear": 0.0,
-        "perspective": 0.0,
-        "flipud": 0.0,
-        "fliplr": 0.0,
-        "hsv_h": 0.0,
-        "hsv_s": 0.10,
-        "hsv_v": 0.15,
-    }
+    "detection": dict(YOLO_BASELINE),
+    "segment": dict(YOLO_BASELINE),
+    "obb": dict(YOLO_BASELINE),
 }
 
 SEARCH_SPACE: dict[str, dict[str, Any]] = {
@@ -66,6 +70,8 @@ STOP_CONDITIONS = {
     "min_delta": 0.003,
     "target_score": 0.65,
 }
+
+OPENCLAW_MAX_TRAINING_RUNS = 5
 
 ALLOWED_TASK_TYPES = tuple(TASK_BASELINES.keys())
 

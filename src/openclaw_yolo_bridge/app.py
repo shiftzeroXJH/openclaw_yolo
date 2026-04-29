@@ -247,6 +247,7 @@ def create_task(payload: dict[str, Any]) -> dict[str, Any]:
         "confirm_timeout",
     }
     body = dict(payload)
+    body.setdefault("save_root", "runs")
     initial_overrides = {key: body.pop(key) for key in list(body.keys()) if key not in known_keys}
     body["initial_overrides"] = initial_overrides
     return _invoke_sync("create-task", lambda: service.create_task(**body))
@@ -326,10 +327,12 @@ def get_job(job_id: str) -> dict[str, Any]:
 
 
 def main() -> None:
+    host = os.environ.get("OPENCLAW_YOLO_BRIDGE_HOST", "127.0.0.1")
+    port = int(os.environ.get("OPENCLAW_YOLO_BRIDGE_PORT", "8765"))
     uvicorn.run(
         "openclaw_yolo_bridge.app:app",
-        host="127.0.0.1",
-        port=8765,
+        host=host,
+        port=port,
         reload=False,
     )
 

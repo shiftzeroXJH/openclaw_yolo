@@ -214,7 +214,6 @@ skills/openclaw-yolo-agent/
 ├── SKILL.md                 # Agent 指令文件
 ├── agents/                  # 子 Agent 配置
 └── references/
-    ├── commands.md          # CLI 命令参考
     └── constraints.md       # 参数约束规则
 ```
 
@@ -427,9 +426,3 @@ openclaw_yolo/
 | 环境变量 | 说明 | 默认值 |
 |---------|------|--------|
 | `OPENCLAW_YOLO_BRIDGE_DB_PATH` | SQLite 数据库路径 | `openclaw_yolo_state.sqlite`（项目根目录） |
-
----
-
-## 📄 许可证
-
-本项目为内部工具，暂未开源。

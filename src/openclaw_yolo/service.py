@@ -13,6 +13,7 @@ from typing import Any
 
 from openclaw_yolo.constants import (
     EXPERIMENT_FILENAME,
+    OPENCLAW_MAX_TRAINING_RUNS,
     SEARCH_SPACE,
     STATE_ANALYZING,
     STATE_CANCELLED,
@@ -58,6 +59,11 @@ REMOTE_TRAINING_RUNNING = "running"
 REMOTE_TRAINING_COMPLETED = "completed"
 REMOTE_TRAINING_MAYBE_STOPPED = "maybe_stopped"
 REMOTE_TRAINING_UNKNOWN = "unknown"
+MODEL_FILENAME_ALIASES = {
+    "yolov11n.pt": "yolo11n.pt",
+    "yolov11n-seg.pt": "yolo11n-seg.pt",
+    "yolov11n-obb.pt": "yolo11n-obb.pt",
+}
 
 
 def _parse_scalar_yaml_value(raw_value: str) -> Any:
@@ -180,6 +186,7 @@ def _compact_summary(summary: dict[str, Any]) -> dict[str, Any]:
 
 def _notification_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return {
+        "basic_info": summary.get("basic_info", {}),
         "metric_context": summary.get("metric_context", {}),
         "final_metrics": summary.get("final_metrics", {}),
         "metric_breakdown": summary.get("metric_breakdown", {}),
@@ -228,18 +235,25 @@ def _build_notify_message(
     trial_id: str,
     compact_summary: dict[str, Any],
 ) -> str:
+    metric_value = compact_summary.get("final_metrics", {}).get(config.goal.metric)
+    target_reached = isinstance(metric_value, (int, float)) and float(metric_value) >= config.goal.target
+    payload = {
+        "experiment_id": config.experiment_id,
+        "trial_id": trial_id,
+        "goal": {
+            "metric": config.goal.metric,
+            "target": config.goal.target,
+            "value": metric_value,
+            "target_reached": target_reached,
+        },
+        "summary": compact_summary,
+    }
     return (
-        "\u8fd9\u662f\u4e00\u6b21 YOLO \u8bad\u7ec3\u5b8c\u6210\u540e\u7684\u81ea\u52a8\u56de\u8c03\uff0c\u8bf7\u7ee7\u7eed\u5728\u5f53\u524d\u4f1a\u8bdd\u4e0a\u4e0b\u6587\u4e2d\u5904\u7406\u3002\n\n"
-        f"experiment_id: {config.experiment_id}\n"
-        f"trial_id: {trial_id}\n"
-        f"goal: {config.goal.metric}={config.goal.target}\n\n"
-        "\u8bf7\u4f60\u4e3b\u52a8\u8c03\u7528 openclaw-yolo \u5de5\u5177\u83b7\u53d6\u5b8c\u6574\u8bad\u7ec3\u4e0a\u4e0b\u6587\uff0c\u5e76\u7ed9\u6211\u603b\u7ed3\u4e0e\u4f18\u5316\u5efa\u8bae\uff1a\n"
-        "1. \u5148\u8c03\u7528 show-task --experiment-id \u67e5\u770b\u4efb\u52a1\u6574\u4f53\u72b6\u6001\n"
-        "2. \u518d\u8c03\u7528 get-summary --trial-id \u8bfb\u53d6\u672c\u8f6e\u7ed3\u6784\u5316\u7ed3\u679c\n"
-        "3. \u7528\u4e2d\u6587\u603b\u7ed3\u672c\u8f6e\u6548\u679c\uff0c\u5224\u65ad\u662f\u5426\u8fbe\u5230\u76ee\u6807\n"
-        "4. \u7ed9\u51fa\u4e0b\u4e00\u8f6e\u8bad\u7ec3\u5efa\u8bae\n"
-        "5. \u5982\u679c\u51b3\u5b9a\u7ee7\u7eed\uff0c\u4f7f\u7528 continue \u63d0\u4ea4 reason \u548c param_updates\n"
-        "6. param_updates \u6700\u591a 3 \u4e2a\uff0c\u4e14\u53ea\u5141\u8bb8\uff1a imgsz, batch, workers, epochs, lr0, weight_decay, mosaic, mixup, degrees, translate, scale, fliplr, hsv_h, hsv_s, hsv_v"
+        "这是一次 YOLO 训练完成后的自动回调，结果已随消息提供。默认不要调用工具。\n\n"
+        f"{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
+        "请直接用中文总结关键指标、训练动态、是否达到目标和下一步建议。"
+        "只有在结果缺字段、训练失败、用户要求细节，或确需续训前确认最新状态时，才调用 openclaw-yolo 工具。"
+        "如果目标已达到，不要调用 continue。"
     )
 
 
@@ -286,18 +300,19 @@ def _notify_openclaw_session(session_id: str, message: str) -> None:
 
 
 def _resolve_pretrained_model(pretrained: str) -> str:
-    pretrained_path = Path(pretrained)
+    normalized_pretrained = MODEL_FILENAME_ALIASES.get(pretrained.strip().lower(), pretrained)
+    pretrained_path = Path(normalized_pretrained)
     if pretrained_path.is_absolute() and pretrained_path.exists():
         return str(pretrained_path.resolve())
 
-    package_model_path = Path(__file__).resolve().parent / "models" / pretrained
+    package_model_path = Path(__file__).resolve().parent / "models" / normalized_pretrained
     if package_model_path.exists():
         return str(package_model_path.resolve())
 
     if pretrained_path.exists():
         return str(pretrained_path.resolve())
 
-    return pretrained
+    return normalized_pretrained
 
 
 def _validate_pretrained_model(pretrained_model: str) -> None:
@@ -880,6 +895,7 @@ class OrchestratorService:
     ) -> dict[str, Any]:
         config = self.repo.get_experiment(experiment_id)
         trials = self.repo.list_trials(experiment_id)
+        self._ensure_openclaw_training_limit(config, trials)
         iteration = self._next_iteration(trials)
         validation = self.validate_params(experiment_id, params=params or config.initial_params)
         if not validation["valid"]:
@@ -1485,6 +1501,20 @@ class OrchestratorService:
         if not trials:
             return 1
         return max(trial.iteration for trial in trials) + 1
+
+    def _ensure_openclaw_training_limit(
+        self,
+        config: ExperimentConfig,
+        trials: list[TrialRecord],
+    ) -> None:
+        if not config.session_key:
+            return
+        started_training_count = sum(1 for trial in trials if trial.source == "trained")
+        if started_training_count >= OPENCLAW_MAX_TRAINING_RUNS:
+            raise ServiceError(
+                "openclaw training run limit reached for this task: "
+                f"{started_training_count}/{OPENCLAW_MAX_TRAINING_RUNS}"
+            )
 
     def _next_named_trial_id(
         self,

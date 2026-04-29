@@ -6,7 +6,8 @@ from threading import Event
 import pytest
 from fastapi.testclient import TestClient
 
-from openclaw_yolo.service import OrchestratorService, ServiceError
+from openclaw_yolo.models import ExperimentConfig, GoalConfig
+from openclaw_yolo.service import OrchestratorService, ServiceError, _build_notify_message
 from openclaw_yolo.core.trainer import TrainingCancelledError
 from openclaw_yolo_bridge import app as app_module
 
@@ -48,6 +49,23 @@ def _create_experiment(service: OrchestratorService, tmp_path: Path) -> str:
     return result["experiment_id"]
 
 
+def _create_openclaw_experiment(service: OrchestratorService, tmp_path: Path) -> str:
+    dataset_root = tmp_path / "dataset"
+    _write_dataset(dataset_root)
+    result = service.create_experiment(
+        description="openclaw experiment",
+        task_type="detection",
+        dataset_root=str(dataset_root),
+        dataset_yaml=None,
+        pretrained="missing-ok.pt",
+        save_root=str(tmp_path / "runs"),
+        goal={"metric": "map50_95", "target": 0.9},
+        initial_params={"imgsz": 224, "batch": 8, "epochs": 2, "workers": 0},
+        session_key="session-a",
+    )
+    return result["experiment_id"]
+
+
 def test_create_experiment_without_session_key(tmp_path: Path) -> None:
     service = OrchestratorService(db_path=":memory:")
     experiment_id = _create_experiment(service, tmp_path)
@@ -57,6 +75,105 @@ def test_create_experiment_without_session_key(tmp_path: Path) -> None:
     assert detail["experiment"]["session_key"] == ""
     assert detail["experiment"]["task_type"] == "detection"
     assert detail["latest_params"]["imgsz"] == 224
+
+
+def test_create_experiment_resolves_yolov11_model_alias(tmp_path: Path) -> None:
+    service = OrchestratorService(db_path=":memory:")
+    dataset_root = tmp_path / "dataset"
+    _write_dataset(dataset_root)
+
+    result = service.create_experiment(
+        description="alias experiment",
+        task_type="detection",
+        dataset_root=str(dataset_root),
+        dataset_yaml=None,
+        pretrained="yolov11n.pt",
+        save_root=str(tmp_path / "runs"),
+        goal={"metric": "map50_95", "target": 0.9},
+        initial_params={"imgsz": 224, "batch": 8, "epochs": 2, "workers": 0},
+    )
+    detail = service.get_experiment_detail(result["experiment_id"])
+
+    assert Path(detail["experiment"]["pretrained_model"]).name == "yolo11n.pt"
+
+
+def test_create_experiment_accepts_segment_task_type(tmp_path: Path) -> None:
+    service = OrchestratorService(db_path=":memory:")
+    dataset_root = tmp_path / "dataset"
+    _write_dataset(dataset_root)
+
+    result = service.create_experiment(
+        description="segment experiment",
+        task_type="segment",
+        dataset_root=str(dataset_root),
+        dataset_yaml=None,
+        pretrained="yolov11n-seg.pt",
+        save_root=str(tmp_path / "runs"),
+        goal={"metric": "map50_95", "target": 0.9},
+        initial_params={"imgsz": 224, "batch": 8, "epochs": 2, "workers": 0},
+    )
+    detail = service.get_experiment_detail(result["experiment_id"])
+
+    assert detail["experiment"]["task_type"] == "segment"
+    assert Path(detail["experiment"]["pretrained_model"]).name == "yolo11n-seg.pt"
+    assert detail["latest_params"]["imgsz"] == 224
+
+
+def test_create_experiment_accepts_obb_task_type(tmp_path: Path) -> None:
+    service = OrchestratorService(db_path=":memory:")
+    dataset_root = tmp_path / "dataset"
+    _write_dataset(dataset_root)
+
+    result = service.create_experiment(
+        description="obb experiment",
+        task_type="obb",
+        dataset_root=str(dataset_root),
+        dataset_yaml=None,
+        pretrained="yolov11n-obb.pt",
+        save_root=str(tmp_path / "runs"),
+        goal={"metric": "map50_95", "target": 0.9},
+        initial_params={"imgsz": 224, "batch": 8, "epochs": 2, "workers": 0},
+    )
+    detail = service.get_experiment_detail(result["experiment_id"])
+
+    assert detail["experiment"]["task_type"] == "obb"
+    assert Path(detail["experiment"]["pretrained_model"]).name == "yolo11n-obb.pt"
+
+
+def test_notify_message_includes_summary_without_tool_prompt() -> None:
+    config = ExperimentConfig(
+        experiment_id="exp_001",
+        description="notify",
+        session_key="session-a",
+        task_type="detection",
+        dataset_root="E:/datasets/demo",
+        dataset_yaml="E:/datasets/demo/data.yaml",
+        pretrained_model="yolo11n.pt",
+        save_root="runs",
+        goal=GoalConfig(metric="map50_95", target=0.65),
+        auto_iterate=False,
+        confirm_timeout=60,
+        status="WAITING_USER_CONFIRM",
+        initial_params={},
+        search_space={},
+        stop_conditions={},
+    )
+
+    message = _build_notify_message(
+        config,
+        "trial_001",
+        {
+            "final_metrics": {"map50_95": 0.72, "precision": 0.9},
+            "training_dynamics": {"loss_trend": "stable_down"},
+            "warnings": [],
+        },
+    )
+
+    assert '"target_reached":true' in message
+    assert '"map50_95":0.72' in message
+    assert "默认不要调用工具" in message
+    assert "show-task --experiment-id" not in message
+    assert "get-summary --trial-id" not in message
 
 
 def test_local_run_allows_many_valid_param_changes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -133,6 +250,63 @@ def test_openclaw_continue_keeps_three_param_limit(tmp_path: Path) -> None:
             param_updates={"imgsz": 320, "batch": 16, "epochs": 3, "lr0": 0.005},
             reason="too many updates",
         )
+
+
+def test_openclaw_task_stops_after_five_training_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = OrchestratorService(db_path=":memory:")
+    monkeypatch.setattr("openclaw_yolo.service._resolve_session_id", lambda _key: "session-id")
+    monkeypatch.setattr("openclaw_yolo.service._notify_openclaw_session", lambda *_args: None)
+    experiment_id = _create_openclaw_experiment(service, tmp_path)
+
+    def fake_run_training(**kwargs):
+        run_dir = Path(kwargs["run_dir"])
+        _write_results(run_dir, map50_95=0.2)
+        return {
+            "run_dir": str(run_dir),
+            "stdout_log": str(run_dir / "stdout.log"),
+            "stderr_log": str(run_dir / "stderr.log"),
+        }
+
+    monkeypatch.setattr("openclaw_yolo.service.run_training", fake_run_training)
+
+    params = service.get_param_metadata(experiment_id)["latest_params"]
+    for index in range(5):
+        result = service.run_trial(experiment_id, params=params)
+        assert result["trial_id"].endswith(f"_{index + 1}")
+
+    with pytest.raises(ServiceError, match="openclaw training run limit reached"):
+        service.run_trial(experiment_id, params=params)
+
+    assert len([trial for trial in service.repo.list_trials(experiment_id) if trial.source == "trained"]) == 5
+
+
+def test_local_task_is_not_limited_to_five_training_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = OrchestratorService(db_path=":memory:")
+    experiment_id = _create_experiment(service, tmp_path)
+
+    def fake_run_training(**kwargs):
+        run_dir = Path(kwargs["run_dir"])
+        _write_results(run_dir, map50_95=0.2)
+        return {
+            "run_dir": str(run_dir),
+            "stdout_log": str(run_dir / "stdout.log"),
+            "stderr_log": str(run_dir / "stderr.log"),
+        }
+
+    monkeypatch.setattr("openclaw_yolo.service.run_training", fake_run_training)
+
+    params = service.get_param_metadata(experiment_id)["latest_params"]
+    for index in range(6):
+        result = service.run_trial(experiment_id, params=params)
+        assert result["trial_id"].endswith(f"_{index + 1}")
+
+    assert len([trial for trial in service.repo.list_trials(experiment_id) if trial.source == "trained"]) == 6
 
 
 def test_import_run_generates_comparison_row(tmp_path: Path) -> None:
@@ -311,6 +485,36 @@ def test_import_remote_run_returns_registered_trial_on_sync_failure(tmp_path: Pa
     assert result["sync_status"] == "failed"
     assert result["registered"]["trial_id"] == "yolo26n_224_1"
     assert service.repo.get_trial("yolo26n_224_1").sync_status == "failed"
+
+
+def test_openclaw_create_task_defaults_save_root_to_runs() -> None:
+    class FakeService:
+        def __init__(self) -> None:
+            self.kwargs = {}
+
+        def create_task(self, **kwargs):
+            self.kwargs = kwargs
+            return {"experiment_id": "exp_001", "save_root": kwargs["save_root"]}
+
+    fake_service = FakeService()
+    app_module.service = fake_service
+    client = TestClient(app_module.app)
+
+    response = client.post(
+        "/tasks",
+        json={
+            "description": "openclaw default save root",
+            "session_key": "session-a",
+            "task_type": "detection",
+            "dataset_root": "E:/datasets/demo",
+            "pretrained": "missing-ok.pt",
+            "goal": {"metric": "map50_95", "target": 0.8},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["save_root"] == "runs"
+    assert fake_service.kwargs["save_root"] == "runs"
 
 
 def test_api_experiment_flow(tmp_path: Path) -> None:
